@@ -233,6 +233,7 @@ async fn validate_destination(
 }
 
 async fn prepare(ctx: Context<'_>, sub: &mut Subscription) -> Result<Vec<crate::news::Article>> {
+    app_id(sub.news_app_id)?;
     let steam = client(ctx).await?;
     let app = steam
         .app(app_id(sub.app_id)?)
@@ -680,8 +681,11 @@ pub async fn delivery_worker(service: Data) {
 }
 
 async fn deliver_pending(service: &Service, http: &serenity::Http) -> Result<()> {
-    let _lock = service.mutations.lock().await;
-    for delivery in service.db.pending().await? {
+    for candidate in service.db.pending().await? {
+        let _lock = service.mutations.lock().await;
+        let Some(delivery) = service.db.pending_delivery(candidate.id).await? else {
+            continue;
+        };
         let event: Notification = serde_json::from_str(&delivery.payload)?;
         let channel = serenity::ChannelId::new(delivery.channel_id.parse()?);
         let role = delivery.role_id.as_ref().map(|r| r.parse()).transpose()?;

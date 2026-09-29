@@ -189,6 +189,11 @@ impl Db {
         Ok(())
     }
 
+    pub async fn pending_delivery(&self, id: i64) -> Result<Option<Delivery>> {
+        Ok(sqlx::query_as("SELECT id,channel_id,role_id,payload,attempts FROM outbox WHERE id=? AND delivered_at IS NULL AND next_attempt <= ?")
+            .bind(id).bind(now()).fetch_optional(&self.0).await?)
+    }
+
     pub async fn failed(&self, delivery: &Delivery, error: &str) -> Result<()> {
         let delay = (5_i64 * 2_i64.pow(delivery.attempts.min(10) as u32)).min(3600);
         sqlx::query("UPDATE outbox SET attempts=attempts+1,next_attempt=?,last_error=? WHERE id=?")
@@ -377,5 +382,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(attempts, 1);
+        assert!(db.pending_delivery(pending[0].id).await.unwrap().is_none());
+        assert_eq!(db.failed_channels().await.unwrap(), ["123"]);
+        db.remove(sub.id).await.unwrap();
+        assert!(db.failed_channels().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn outbox_failure_rolls_back_build_state() {
+        let (_dir, db) = database().await;
+        let sub = subscription(&db, "123").await;
+        db.record_build(&sub, "1").await.unwrap();
+        sqlx::query("CREATE TRIGGER reject_outbox BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END")
+            .execute(&db.0).await.unwrap();
+        assert!(db.record_build(&sub, "2").await.is_err());
+        assert_eq!(
+            db.get(sub.id).await.unwrap().unwrap().build_id.as_deref(),
+            Some("1")
+        );
+        assert_eq!(db.pending_count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn subscription_and_news_baseline_are_saved_together() {
+        let (_dir, db) = database().await;
+        let sub = subscription(&db, "123").await;
+        let baseline = article("existing", now());
+        db.save(&sub, Some(std::slice::from_ref(&baseline)))
+            .await
+            .unwrap();
+        let saved = db.get(sub.id).await.unwrap().unwrap();
+        assert!(saved.news_initialized);
+        db.record_news(&saved, &[baseline, article("new", now())])
+            .await
+            .unwrap();
+        assert_eq!(db.pending_count().await.unwrap(), 1);
     }
 }
