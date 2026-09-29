@@ -1,14 +1,15 @@
-# Instructions de travail
+# Working instructions
 
 ## Git
 
-- Travailler sur `dev` et préserver les modifications existantes de l'utilisateur.
-- Après chaque modification cohérente, effectuer les vérifications adaptées, créer un commit et pousser sur `origin/dev`.
-- Ne pas commiter de secrets, de sessions Steam ou de bases de données locales.
-- Ne pas pousser de développement sur `master`. Le merge vers `master` est réservé à une V1 fonctionnelle et validée.
-- Ne pas réécrire l'historique publié ni forcer les pushes.
+- Work on `dev` and preserve the user's existing changes.
+- After each coherent change, run appropriate checks, create a commit, and push to `origin/dev`.
+- Do not commit secrets, Steam sessions, or local databases.
+- Do not push development changes to `master`. Reserve the merge into `master` for a functional, validated V1.
+- Do not rewrite published history or force push.
 
-## Produit
+## Product and language
 
-- Suivre les décisions de `docs/PLAN.md`.
-- Le bot et sa documentation utilisateur sont en français ; les articles Steam conservent leur langue d'origine.
+- Follow the decisions in `docs/PLAN.md`.
+- Write all repository content in English, including documentation, code comments, identifiers, and commit messages.
+- Use English for bot commands and messages. Steam articles retain their original language.

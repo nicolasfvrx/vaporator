@@ -1,17 +1,18 @@
 # Vaporator
 
-Bot Discord en Rust pour suivre les builds et les actualités officielles des applications Steam.
+A Discord bot written in Rust to track Steam application builds and official news.
 
-## État du projet
+## Project status
 
-Le dépôt est initialisé. L'implémentation de la V1 reste à réaliser selon le [plan](docs/PLAN.md).
+The repository is initialized. V1 implementation is pending; see the [plan](docs/PLAN.md).
 
-## Développement
+## Development
 
-- `master` accueillera la V1 fonctionnelle.
-- `dev` est la branche de développement : chaque modification cohérente et vérifiée doit être commitée puis poussée sur `origin/dev`.
-- Le merge de `dev` vers `master` interviendra lorsque la V1 sera fonctionnelle.
+- `master` will hold the working V1 release.
+- `dev` is the development branch. Commit and push each coherent, verified change to `origin/dev`.
+- Merge `dev` into `master` once V1 is functional and validated.
+- Use English for repository content, documentation, code comments, commit messages, and bot commands and messages. Steam articles retain their original language.
 
-## Cible V1
+## V1 target
 
-Un Discord, configuration par commandes slash, suivi Steam via PICS, actualités officielles, stockage SQLite et déploiement Docker sous Linux.
+One Discord server, slash command configuration, Steam monitoring through PICS, official news, SQLite storage, and Docker deployment on Linux.

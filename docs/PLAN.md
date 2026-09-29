@@ -1,41 +1,43 @@
-# Plan V1 — Vaporator
+# V1 Plan — Vaporator
 
-## Objectif
+## Goal
 
-Créer un bot Discord en Rust pour une communauté, configurable par commandes slash administrateur. Annoncer les nouveaux builds Steam et les publications officielles des développeurs. Héberger le bot sur Linux avec Docker et conserver l'état dans SQLite sur un volume persistant.
+Build a Discord bot in Rust for one community, configurable through administrator slash commands. Announce new Steam builds and official developer posts. Run the bot on Linux with Docker and persist state in SQLite on a mounted volume.
+
+Use English for repository content, documentation, code comments, commit messages, and bot commands and messages. Steam articles retain their original language.
 
 ## Architecture
 
-- Tokio pour l'exécution asynchrone, Poise/Serenity pour Discord, steam-vent pour Steam, reqwest pour les actualités et SQLx pour SQLite.
-- Séparer collecte Steam, détection des événements, stockage et publication Discord.
-- Première étape : valider les requêtes PICS et la lecture des branches/builds des quatre applications DayZ. Vérifier les noms, les accès anonymes et les éventuels besoins d'authentification.
-- Essayer une connexion Steam anonyme par défaut. Fournir `vaporator steam-login` pour une authentification locale avec Steam Guard et une session persistante protégée dans le volume Docker. Aucun identifiant Steam dans Discord.
+- Use Tokio for asynchronous execution, Poise/Serenity for Discord, steam-vent for Steam, reqwest for news, and SQLx for SQLite.
+- Separate Steam collection, event detection, storage, and Discord publishing.
+- First, validate PICS requests and branch/build retrieval for the four DayZ applications. Verify names, anonymous access, and any authentication requirements.
+- Try anonymous Steam authentication by default. Provide `vaporator steam-login` for local authentication with Steam Guard and a protected persistent session in the Docker volume. Never send Steam credentials through Discord.
 
-## Surveillance des builds
+## Build monitoring
 
-- Garder une connexion Steam persistante et interroger les changements PICS toutes les 60 secondes à partir du dernier numéro mémorisé.
-- Relire les applications suivies concernées et annoncer les changements de `buildid` de leur branche, y compris un retour à un ancien build.
-- Ignorer les changements de métadonnées sans changement de build.
-- Au premier ajout, enregistrer l'état courant sans annonce historique.
-- Après une interruption, comparer avec le dernier état conservé. Ne pas promettre de reconstituer les builds intermédiaires.
-- Relire toutes les applications suivies après reconnexion et périodiquement pour réconcilier les états.
+- Maintain a persistent Steam connection and query PICS changes every 60 seconds using the last stored change number.
+- Fetch updated information for affected tracked applications and announce changes to the tracked branch's `buildid`, including rollbacks to an older build.
+- Ignore metadata changes without a build change.
+- When adding a subscription, record the current state without announcing historical updates.
+- After an interruption, compare against the last stored state. Do not promise to reconstruct intermediate builds.
+- Refresh all tracked applications after reconnecting and periodically to reconcile state.
 
-## Commandes Discord
+## Discord commands
 
-Commandes réservées aux administrateurs du Discord configuré :
+Restrict commands to administrators of the configured Discord server:
 
-| Commande | Fonction |
+| Command | Purpose |
 | --- | --- |
-| `/steam suivre` | AppID, builds/actualités/les deux, branche, salon et rôle facultatif |
-| `/steam modifier` | Modifier un suivi, dont sa source d'actualités |
-| `/steam retirer` | Supprimer un suivi |
-| `/steam liste` | Lister les suivis et leurs identifiants |
-| `/steam branches` | Lister les branches accessibles d'une application |
-| `/steam dayz` | Installer le préréglage DayZ |
-| `/steam statut` | Connexions, dernières vérifications et erreurs |
-| `/steam test` | Envoyer un exemple sans mention dans le salon choisi |
+| `/steam follow` | AppID, builds/news/both, branch, channel, and optional role |
+| `/steam edit` | Edit a subscription, including its news source |
+| `/steam remove` | Remove a subscription |
+| `/steam list` | List subscriptions and their identifiers |
+| `/steam branches` | List an application's accessible branches |
+| `/steam dayz` | Install the DayZ preset |
+| `/steam status` | Show connections, latest checks, and errors |
+| `/steam test` | Send a sample without mentions to the selected channel |
 
-Préréglage DayZ : branche `public` pour les quatre applications suivantes.
+The DayZ preset tracks the `public` branch of these four applications:
 
 | Application | AppID |
 | --- | --- |
@@ -44,40 +46,40 @@ Préréglage DayZ : branche `public` pour les quatre applications suivantes.
 | DayZ Server | 223350 |
 | DayZ Experimental Server | 1042420 |
 
-Une annonce de build affiche l'application, la branche, l'ancien et le nouveau build et l'heure de détection. Messages en français. Mentions désactivées par défaut et limitées au rôle explicitement configuré.
+A build announcement includes the application, branch, previous and new build IDs, and detection time. Messages are in English. Mentions are disabled by default and limited to the explicitly configured role.
 
-## Actualités
+## News
 
-- Consulter `ISteamNews/GetNewsForApp` toutes les 5 minutes et filtrer les publications officielles Steam Community.
-- Publier titre, court extrait nettoyé et lien original, dans la langue de l'article.
-- Autoriser une application source distincte pour les actualités d'un serveur dédié.
-- Le préréglage DayZ suit les actualités des deux applications clientes sans les répéter pour les serveurs.
-- Séparer annonces de builds et articles sans association automatique supposée.
-- Au premier ajout, mémoriser les articles existants sans les envoyer. Après interruption, rattraper les nouveaux articles des dernières 24 heures avec pagination.
-- Dédupliquer les articles par identifiant Steam et salon.
+- Query `ISteamNews/GetNewsForApp` every 5 minutes and filter for official Steam Community posts.
+- Publish the title, a short sanitized excerpt, and the original link in the article's language.
+- Allow a separate source application for a dedicated server's news.
+- The DayZ preset follows news from the two client applications without repeating it for the servers.
+- Publish build announcements and articles separately without assuming an automatic association.
+- When adding a subscription, record existing articles without posting them. After an interruption, catch up on new articles from the past 24 hours using pagination.
+- Deduplicate articles by Steam article identifier and channel.
 
-## Persistance et erreurs
+## Persistence and errors
 
-- Enregistrer changements détectés et notifications à envoyer dans une même transaction SQLite.
-- Réessayer les envois après erreur, respecter les limites Discord et reconnecter Steam avec un délai progressif.
-- Afficher les problèmes de permissions et de session Steam dans les logs et `/steam statut`.
-- Un doublon reste possible si Discord accepte un message avant une coupure empêchant d'enregistrer son succès. Ne pas promettre une livraison exactement une fois.
+- Record detected changes and pending notifications in the same SQLite transaction.
+- Retry failed deliveries, respect Discord rate limits, and reconnect to Steam with progressive backoff.
+- Report permission issues and expired Steam sessions in logs and `/steam status`.
+- A duplicate remains possible if Discord accepts a message just before an interruption prevents recording success. Do not promise exactly-once delivery.
 
-## Livraison et validation
+## Delivery and validation
 
-- Projet Rust, Dockerfile, Docker Compose, configuration d'exemple et guide de création du bot, permissions, Steam Guard et sauvegarde du volume.
-- Tests : changement de build, retour arrière, métadonnées seules, premier lancement silencieux, redémarrage et reprise des notifications.
-- Tests actualités : filtrage officiel, doublons, pagination et contenu trop long.
-- Tests erreurs : application inconnue, branche inaccessible, permissions Discord insuffisantes, coupures Steam/Discord et expiration de session.
-- Compilation, tests, Clippy, démarrage Docker, lecture réelle des quatre applications et message de test dans le salon configuré.
+- Deliver the Rust project, Dockerfile, Docker Compose configuration, example configuration, and a guide covering bot setup, permissions, Steam Guard, and volume backups.
+- Test build changes, rollbacks, metadata-only changes, silent initial setup, restarts, and pending notification recovery.
+- Test news filtering, duplicates, pagination, and oversized content.
+- Test unknown applications, inaccessible branches, insufficient Discord permissions, Steam/Discord outages, and session expiry.
+- Run compilation, tests, Clippy, Docker startup, live reads of the four applications, and a test message in the configured channel.
 
-## Limites V1
+## V1 limits
 
-Un seul Discord, applications configurables au-delà de DayZ, branches accessibles sans mot de passe. Le suivi Workshop, l'installation et le redémarrage des serveurs de jeu sont hors périmètre.
+One Discord server, configurable applications beyond DayZ, and branches accessible without a password. Workshop monitoring and game server installation or restarts are out of scope.
 
-## Références
+## References
 
 - [steam-vent](https://docs.rs/steam-vent/latest/steam_vent/)
-- [Requêtes PICS dans SteamKit](https://github.com/SteamRE/SteamKit/blob/master/SteamKit2/SteamKit2/Steam/Handlers/SteamApps/SteamApps.cs)
-- [Actualités Steam](https://partner.steamgames.com/doc/webapi/ISteamNews)
-- [Hébergement des serveurs DayZ](https://community.bistudio.com/wiki/DayZ:Hosting_a_Linux_Server)
+- [PICS requests in SteamKit](https://github.com/SteamRE/SteamKit/blob/master/SteamKit2/SteamKit2/Steam/Handlers/SteamApps/SteamApps.cs)
+- [Steam news API](https://partner.steamgames.com/doc/webapi/ISteamNews)
+- [DayZ server hosting](https://community.bistudio.com/wiki/DayZ:Hosting_a_Linux_Server)
