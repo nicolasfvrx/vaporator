@@ -176,8 +176,8 @@ pub async fn login(data_dir: &Path) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         tokio::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o700)).await?;
     }
-    let account = rpassword::prompt_password("Steam account name (hidden): ")?;
-    let password = rpassword::prompt_password("Steam password: ")?;
+    let account = rpassword::prompt_password(crate::i18n::tr("cli.account", &[]))?;
+    let password = rpassword::prompt_password(crate::i18n::tr("cli.password", &[]))?;
     let servers = ServerList::discover().await?;
     let connection = Connection::login(
         &servers,
@@ -203,8 +203,13 @@ pub async fn login(data_dir: &Path) -> Result<()> {
         options.mode(0o600);
     }
     let file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
     serde_json::to_writer(file, &session)?;
-    println!("Steam session saved. Protect the data directory and restart the bot.");
+    println!("{}", crate::i18n::tr("cli.saved", &[]));
     Ok(())
 }
 
