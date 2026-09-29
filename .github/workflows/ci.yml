@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy && rustup default 1.88.0
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake clang
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: docker compose --env-file .env.example config --quiet
+      - run: docker build -t vaporator:ci .
+      - run: docker run --rm vaporator:ci --help

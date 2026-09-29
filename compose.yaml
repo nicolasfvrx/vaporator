@@ -1,0 +1,31 @@
+services:
+  vaporator:
+    build: .
+    image: vaporator:local
+    restart: unless-stopped
+    init: true
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?Set DISCORD_TOKEN in .env}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:?Set DISCORD_GUILD_ID in .env}
+      DATA_DIR: /data
+      BUILD_INTERVAL_SECONDS: ${BUILD_INTERVAL_SECONDS:-60}
+      NEWS_INTERVAL_SECONDS: ${NEWS_INTERVAL_SECONDS:-300}
+      RUST_LOG: ${RUST_LOG:-vaporator=info,warn}
+    volumes:
+      - vaporator-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  vaporator-data:

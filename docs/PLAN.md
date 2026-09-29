@@ -62,7 +62,7 @@ A build announcement includes the application, branch, previous and new build ID
 - Query `ISteamNews/GetNewsForApp` every 5 minutes and filter for official Steam Community posts.
 - Publish the title, a short sanitized excerpt, and the original link in the article's language.
 - Allow a separate source application for a dedicated server's news.
-- The DayZ preset follows news from the two client applications without repeating it for the servers.
+- The DayZ preset uses the main DayZ news feed (`221100`) for both client subscriptions, deduplicated per channel. Live validation found the Experimental news endpoint (`1024020`) returns HTTP 403. Administrators can override the source with `/steam edit`.
 - Publish build announcements and articles separately without assuming an automatic association.
 - When adding a subscription, record existing articles without posting them. After an interruption, catch up on new articles from the past 24 hours using pagination.
 - Deduplicate articles by Steam article identifier and channel.
