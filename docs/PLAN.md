@@ -13,6 +13,15 @@ Use English for repository content, documentation, code comments, commit message
 - First, validate PICS requests and branch/build retrieval for the four DayZ applications. Verify names, anonymous access, and any authentication requirements.
 - Try anonymous Steam authentication by default. Provide `vaporator steam-login` for local authentication with Steam Guard and a protected persistent session in the Docker volume. Never send Steam credentials through Discord.
 
+## Language and internationalization
+
+- Ship English only in V1. Use English for command and subcommand names, option names, choice values, descriptions, help, replies, validation errors, embeds, buttons, notifications, and CLI output.
+- Keep command identifiers and machine-readable values in English even when additional display languages are introduced.
+- Store bot-authored display text in a central English message catalog, accessed through stable keys and named placeholders. Keep message formatting separate from business logic and avoid sentence concatenation.
+- Provide a locale-aware rendering boundary with English as the default and fallback for unsupported locales or missing translations. V1 always renders English; additional translations and language selection are future work.
+- Use Discord timestamps in Discord messages and UTC timestamps in logs and persisted state. Preserve Unicode in application names, user-supplied labels, and source articles.
+- Keep logs, developer diagnostics, documentation, code comments, and commit messages in English. Steam articles retain their source language; automatic article translation is outside V1.
+
 ## Build monitoring
 
 - Maintain a persistent Steam connection and query PICS changes every 60 seconds using the last stored change number.
@@ -71,6 +80,7 @@ A build announcement includes the application, branch, previous and new build ID
 - Test build changes, rollbacks, metadata-only changes, silent initial setup, restarts, and pending notification recovery.
 - Test news filtering, duplicates, pagination, and oversized content.
 - Test unknown applications, inaccessible branches, insufficient Discord permissions, Steam/Discord outages, and session expiry.
+- Validate that all message keys exist in the English catalog, named placeholders match, unsupported locales fall back to English, and Discord command identifiers remain English. Check Unicode labels and timestamp rendering.
 - Run compilation, tests, Clippy, Docker startup, live reads of the four applications, and a test message in the configured channel.
 
 ## V1 limits

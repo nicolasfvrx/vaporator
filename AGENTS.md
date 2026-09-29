@@ -13,3 +13,6 @@
 - Follow the decisions in `docs/PLAN.md`.
 - Write all repository content in English, including documentation, code comments, identifiers, and commit messages.
 - Use English for bot commands and messages. Steam articles retain their original language.
+- Keep command names, subcommand names, option names, and machine-readable values in English.
+- Internationalize bot-authored user-facing text through a central English message catalog with stable keys and named placeholders. Do not scatter display strings or assemble translated sentences in business logic.
+- V1 ships English only. Keep localization extensible, with English as the default and fallback. Documentation, logs, and developer diagnostics remain in English.
