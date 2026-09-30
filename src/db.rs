@@ -34,15 +34,23 @@ impl Db {
         Ok(Self(pool))
     }
 
-    pub async fn list(&self) -> Result<Vec<Subscription>> {
+    pub async fn list(&self, guild_id: &str) -> Result<Vec<Subscription>> {
+        Ok(sqlx::query_as("SELECT * FROM subscriptions WHERE guild_id = ? ORDER BY id")
+            .bind(guild_id)
+            .fetch_all(&self.0)
+            .await?)
+    }
+
+    pub async fn list_all(&self) -> Result<Vec<Subscription>> {
         Ok(sqlx::query_as("SELECT * FROM subscriptions ORDER BY id")
             .fetch_all(&self.0)
             .await?)
     }
 
-    pub async fn get(&self, id: i64) -> Result<Option<Subscription>> {
-        Ok(sqlx::query_as("SELECT * FROM subscriptions WHERE id = ?")
+    pub async fn get(&self, id: i64, guild_id: &str) -> Result<Option<Subscription>> {
+        Ok(sqlx::query_as("SELECT * FROM subscriptions WHERE id = ? AND guild_id = ?")
             .bind(id)
+            .bind(guild_id)
             .fetch_optional(&self.0)
             .await?)
     }
@@ -50,14 +58,14 @@ impl Db {
     pub async fn save(&self, sub: &Subscription, baseline: Option<&[Article]>) -> Result<i64> {
         let mut tx = self.0.begin().await?;
         let id = if sub.id == 0 {
-            let result = sqlx::query("INSERT INTO subscriptions(app_id,name,branch,mode,news_app_id,channel_id,role_id,build_id,icon_url) VALUES (?,?,?,?,?,?,?,?,?)")
+            let result = sqlx::query("INSERT INTO subscriptions(app_id,name,branch,mode,news_app_id,guild_id,channel_id,role_id,build_id,icon_url) VALUES (?,?,?,?,?,?,?,?,?,?)")
                 .bind(sub.app_id).bind(&sub.name).bind(&sub.branch).bind(&sub.mode).bind(sub.news_app_id)
-                .bind(&sub.channel_id).bind(&sub.role_id).bind(&sub.build_id).bind(&sub.icon_url).execute(&mut *tx).await?;
+                .bind(&sub.guild_id).bind(&sub.channel_id).bind(&sub.role_id).bind(&sub.build_id).bind(&sub.icon_url).execute(&mut *tx).await?;
             result.last_insert_rowid()
         } else {
-            let result = sqlx::query("UPDATE subscriptions SET app_id=?,name=?,branch=?,mode=?,news_app_id=?,channel_id=?,role_id=?,build_id=?,icon_url=?,news_initialized=0,revision=revision+1 WHERE id=? AND revision=?")
+            let result = sqlx::query("UPDATE subscriptions SET app_id=?,name=?,branch=?,mode=?,news_app_id=?,guild_id=?,channel_id=?,role_id=?,build_id=?,icon_url=?,news_initialized=0,revision=revision+1 WHERE id=? AND revision=? AND guild_id=?")
                 .bind(sub.app_id).bind(&sub.name).bind(&sub.branch).bind(&sub.mode).bind(sub.news_app_id)
-                .bind(&sub.channel_id).bind(&sub.role_id).bind(&sub.build_id).bind(&sub.icon_url).bind(sub.id).bind(sub.revision).execute(&mut *tx).await?;
+                .bind(&sub.guild_id).bind(&sub.channel_id).bind(&sub.role_id).bind(&sub.build_id).bind(&sub.icon_url).bind(sub.id).bind(sub.revision).bind(&sub.guild_id).execute(&mut *tx).await?;
             ensure!(
                 result.rows_affected() == 1,
                 "Subscription changed concurrently; retry the command"
@@ -91,9 +99,10 @@ impl Db {
         Ok(id)
     }
 
-    pub async fn remove(&self, id: i64) -> Result<bool> {
-        Ok(sqlx::query("DELETE FROM subscriptions WHERE id=?")
+    pub async fn remove(&self, id: i64, guild_id: &str) -> Result<bool> {
+        Ok(sqlx::query("DELETE FROM subscriptions WHERE id=? AND guild_id=?")
             .bind(id)
+            .bind(guild_id)
             .execute(&self.0)
             .await?
             .rows_affected()
@@ -263,6 +272,7 @@ mod tests {
             branch: "public".into(),
             mode: "both".into(),
             news_app_id: 42,
+            guild_id: "0".into(),
             channel_id: channel.into(),
             role_id: None,
             build_id: None,
@@ -300,7 +310,7 @@ mod tests {
         let reopened = Db::open(dir.path()).await.unwrap();
         assert_eq!(
             reopened
-                .get(sub.id)
+                .get(sub.id, "0")
                 .await
                 .unwrap()
                 .unwrap()
@@ -351,7 +361,7 @@ mod tests {
         let old = subscription(&db, "123").await;
         db.record_build(&old, "1").await.unwrap();
         db.record_build(&old, "2").await.unwrap();
-        let mut edited = db.get(old.id).await.unwrap().unwrap();
+        let mut edited = db.get(old.id, "0").await.unwrap().unwrap();
         edited.channel_id = "456".into();
         edited.build_id = Some("3".into());
         db.save(&edited, None).await.unwrap();
@@ -361,11 +371,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            db.get(old.id).await.unwrap().unwrap().build_id.as_deref(),
+            db.get(old.id, "0").await.unwrap().unwrap().build_id.as_deref(),
             Some("3")
         );
         assert!(db.save(&old, None).await.is_err());
-        db.remove(old.id).await.unwrap();
+        db.remove(old.id, "0").await.unwrap();
         db.record_build(&old, "100").await.unwrap();
         assert_eq!(db.pending_count().await.unwrap(), 0);
     }
@@ -387,7 +397,7 @@ mod tests {
         assert_eq!(attempts, 1);
         assert!(db.pending_delivery(pending[0].id).await.unwrap().is_none());
         assert_eq!(db.failed_channels().await.unwrap(), ["123"]);
-        db.remove(sub.id).await.unwrap();
+        db.remove(sub.id, "0").await.unwrap();
         assert!(db.failed_channels().await.unwrap().is_empty());
     }
 
@@ -400,7 +410,7 @@ mod tests {
             .execute(&db.0).await.unwrap();
         assert!(db.record_build(&sub, "2").await.is_err());
         assert_eq!(
-            db.get(sub.id).await.unwrap().unwrap().build_id.as_deref(),
+            db.get(sub.id, "0").await.unwrap().unwrap().build_id.as_deref(),
             Some("1")
         );
         assert_eq!(db.pending_count().await.unwrap(), 0);
@@ -414,7 +424,7 @@ mod tests {
         db.save(&sub, Some(std::slice::from_ref(&baseline)))
             .await
             .unwrap();
-        let saved = db.get(sub.id).await.unwrap().unwrap();
+        let saved = db.get(sub.id, "0").await.unwrap().unwrap();
         assert!(saved.news_initialized);
         db.record_news(&saved, &[baseline, article("new", now())])
             .await
@@ -443,12 +453,12 @@ mod tests {
         sqlx::query("INSERT INTO subscriptions(app_id,name,branch,mode,news_app_id,channel_id,build_id) VALUES (42,'Existing game','public','builds',42,'123','1')").execute(&pool).await.unwrap();
         pool.close().await;
         let db = Db::open(dir.path()).await.unwrap();
-        let mut sub = db.list().await.unwrap().remove(0);
+        let mut sub = db.list("").await.unwrap().remove(0);
         assert!(sub.icon_url.is_none());
         sub.icon_url = Some("https://cdn.akamai.steamstatic.com/icon.jpg".into());
         db.record_build(&sub, "2").await.unwrap();
         assert_eq!(
-            db.get(sub.id).await.unwrap().unwrap().icon_url,
+            db.get(sub.id, "").await.unwrap().unwrap().icon_url,
             sub.icon_url
         );
         let event: Notification =

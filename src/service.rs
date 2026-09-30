@@ -28,15 +28,6 @@ pub struct Service {
 impl Service {
     pub async fn new(config: Config) -> Result<Arc<Self>> {
         let db = Db::open(&config.data_dir).await?;
-        if let Some(guild) = db.state("guild_id").await? {
-            anyhow::ensure!(
-                guild == config.guild_id.to_string(),
-                "Database belongs to a different Discord server; use a separate DATA_DIR"
-            );
-        } else {
-            db.set_state("guild_id", &config.guild_id.to_string())
-                .await?;
-        }
         Ok(Arc::new(Self {
             config,
             db,
@@ -102,7 +93,7 @@ async fn monitor_builds(service: &Service, client: &Steam) -> Result<()> {
     loop {
         let changes = client.changes(cursor).await?;
         let full = changes.full_update || now() - last_full >= 900;
-        let subscriptions = service.db.list().await?;
+        let subscriptions = service.db.list_all().await?;
         let mut apps = HashMap::new();
         for sub in subscriptions.iter().filter(|s| s.builds()) {
             let key = format!("build:{}", sub.id);
@@ -178,7 +169,7 @@ pub async fn news_worker(service: Arc<Service>) {
 
 async fn poll_news(service: &Service) -> Result<()> {
     let mut cache = HashMap::new();
-    for sub in service.db.list().await?.iter().filter(|s| s.news()) {
+    for sub in service.db.list_all().await?.iter().filter(|s| s.news()) {
         let key = format!("news:{}", sub.id);
         let articles = if let Some(articles) = cache.get(&sub.news_app_id) {
             articles

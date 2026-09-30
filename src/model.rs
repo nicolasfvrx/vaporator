@@ -9,6 +9,7 @@ pub struct Subscription {
     pub branch: String,
     pub mode: String,
     pub news_app_id: i64,
+    pub guild_id: String,
     pub channel_id: String,
     pub role_id: Option<String>,
     pub build_id: Option<String>,

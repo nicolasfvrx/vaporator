@@ -63,13 +63,12 @@ pub fn commands() -> Vec<poise::Command<Data, anyhow::Error>> {
 
 pub async fn run(service: Data) -> Result<()> {
     let token = service.config.token.clone();
-    let guild = serenity::GuildId::new(service.config.guild_id);
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: commands(),
             command_check: Some(|ctx| {
                 Box::pin(async move {
-                    if ctx.guild_id().map(|g| g.get()) != Some(ctx.data().config.guild_id) {
+                    if ctx.guild_id().is_none() {
                         return Err(user_error("error.access"));
                     }
                     let admin = ctx
@@ -120,9 +119,8 @@ pub async fn run(service: Data) -> Result<()> {
         })
         .setup(move |ctx, _ready, framework| {
             Box::pin(async move {
-                poise::builtins::register_in_guild(ctx, &framework.options().commands, guild)
-                    .await?;
-                tracing::info!(guild_id = guild.get(), "Discord commands registered");
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                tracing::info!("Discord commands registered globally");
                 Ok(service)
             })
         })
@@ -200,7 +198,7 @@ async fn validate_destination(
     channel: &serenity::GuildChannel,
     role: Option<serenity::RoleId>,
 ) -> Result<()> {
-    if channel.guild_id.get() != ctx.data().config.guild_id
+    if Some(channel.guild_id.get()) != ctx.guild_id().map(|g| g.get())
         || !matches!(
             channel.kind,
             serenity::ChannelType::Text | serenity::ChannelType::News
@@ -274,7 +272,7 @@ async fn save(
     articles: &[crate::news::Article],
 ) -> Result<i64> {
     let _lock = ctx.data().mutations.lock().await;
-    if ctx.data().db.list().await?.iter().any(|s| {
+    if ctx.data().db.list(&ctx.guild_id().unwrap().get().to_string()).await?.iter().any(|s| {
         s.id != sub.id
             && s.app_id == sub.app_id
             && s.branch == sub.branch
@@ -318,6 +316,7 @@ async fn follow(
         branch: branch.unwrap_or_else(|| "public".into()),
         mode: mode.unwrap_or(Mode::Both).as_str().into(),
         news_app_id: news_app_id.unwrap_or(app_id),
+        guild_id: ctx.guild_id().unwrap().get().to_string(),
         channel_id: channel.id.to_string(),
         role_id: role.map(|r| r.id.to_string()),
         build_id: None,
@@ -352,7 +351,7 @@ async fn edit(
     let mut sub = ctx
         .data()
         .db
-        .get(id)
+        .get(id, &ctx.guild_id().unwrap().get().to_string())
         .await?
         .ok_or_else(|| user_error("error.missing"))?;
     if clear_role == Some(true) && role.is_some() {
@@ -407,7 +406,7 @@ async fn edit(
 async fn remove(ctx: Context<'_>, id: i64) -> Result<()> {
     ctx.defer_ephemeral().await?;
     let _lock = ctx.data().mutations.lock().await;
-    if !ctx.data().db.remove(id).await? {
+    if !ctx.data().db.remove(id, &ctx.guild_id().unwrap().get().to_string()).await? {
         return Err(user_error("error.missing"));
     }
     ctx.data().clear(&format!("build:{id}")).await;
@@ -418,7 +417,7 @@ async fn remove(ctx: Context<'_>, id: i64) -> Result<()> {
 #[poise::command(slash_command)]
 async fn list(ctx: Context<'_>) -> Result<()> {
     ctx.defer_ephemeral().await?;
-    let subs = ctx.data().db.list().await?;
+    let subs = ctx.data().db.list(&ctx.guild_id().unwrap().get().to_string()).await?;
     if subs.is_empty() {
         return reply(ctx, tr("reply.empty", &[])).await;
     }
@@ -484,7 +483,7 @@ async fn dayz(
     let mut added = 0;
     let mut skipped = 0;
     for id in [221100, 1024020, 223350, 1042420] {
-        if ctx.data().db.list().await?.iter().any(|s| {
+        if ctx.data().db.list(&ctx.guild_id().unwrap().get().to_string()).await?.iter().any(|s| {
             s.app_id == id && s.branch == "public" && s.channel_id == channel.id.to_string()
         }) {
             skipped += 1;
@@ -503,6 +502,7 @@ async fn dayz(
             branch: "public".into(),
             mode: if client_app { "both" } else { "builds" }.into(),
             news_app_id: if client_app { 221100 } else { id },
+            guild_id: ctx.guild_id().unwrap().get().to_string(),
             channel_id: channel.id.to_string(),
             role_id: role.as_ref().map(|r| r.id.to_string()),
             build_id: app
