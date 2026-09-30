@@ -35,10 +35,12 @@ impl Db {
     }
 
     pub async fn list(&self, guild_id: &str) -> Result<Vec<Subscription>> {
-        Ok(sqlx::query_as("SELECT * FROM subscriptions WHERE guild_id = ? ORDER BY id")
-            .bind(guild_id)
-            .fetch_all(&self.0)
-            .await?)
+        Ok(
+            sqlx::query_as("SELECT * FROM subscriptions WHERE guild_id = ? ORDER BY id")
+                .bind(guild_id)
+                .fetch_all(&self.0)
+                .await?,
+        )
     }
 
     pub async fn list_all(&self) -> Result<Vec<Subscription>> {
@@ -48,11 +50,13 @@ impl Db {
     }
 
     pub async fn get(&self, id: i64, guild_id: &str) -> Result<Option<Subscription>> {
-        Ok(sqlx::query_as("SELECT * FROM subscriptions WHERE id = ? AND guild_id = ?")
-            .bind(id)
-            .bind(guild_id)
-            .fetch_optional(&self.0)
-            .await?)
+        Ok(
+            sqlx::query_as("SELECT * FROM subscriptions WHERE id = ? AND guild_id = ?")
+                .bind(id)
+                .bind(guild_id)
+                .fetch_optional(&self.0)
+                .await?,
+        )
     }
 
     pub async fn save(&self, sub: &Subscription, baseline: Option<&[Article]>) -> Result<i64> {
@@ -100,13 +104,15 @@ impl Db {
     }
 
     pub async fn remove(&self, id: i64, guild_id: &str) -> Result<bool> {
-        Ok(sqlx::query("DELETE FROM subscriptions WHERE id=? AND guild_id=?")
-            .bind(id)
-            .bind(guild_id)
-            .execute(&self.0)
-            .await?
-            .rows_affected()
-            > 0)
+        Ok(
+            sqlx::query("DELETE FROM subscriptions WHERE id=? AND guild_id=?")
+                .bind(id)
+                .bind(guild_id)
+                .execute(&self.0)
+                .await?
+                .rows_affected()
+                > 0,
+        )
     }
 
     pub async fn record_build(&self, expected: &Subscription, build: &str) -> Result<()> {
@@ -371,7 +377,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            db.get(old.id, "0").await.unwrap().unwrap().build_id.as_deref(),
+            db.get(old.id, "0")
+                .await
+                .unwrap()
+                .unwrap()
+                .build_id
+                .as_deref(),
             Some("3")
         );
         assert!(db.save(&old, None).await.is_err());
@@ -410,7 +421,12 @@ mod tests {
             .execute(&db.0).await.unwrap();
         assert!(db.record_build(&sub, "2").await.is_err());
         assert_eq!(
-            db.get(sub.id, "0").await.unwrap().unwrap().build_id.as_deref(),
+            db.get(sub.id, "0")
+                .await
+                .unwrap()
+                .unwrap()
+                .build_id
+                .as_deref(),
             Some("1")
         );
         assert_eq!(db.pending_count().await.unwrap(), 0);

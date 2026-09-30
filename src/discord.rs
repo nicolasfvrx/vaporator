@@ -272,12 +272,19 @@ async fn save(
     articles: &[crate::news::Article],
 ) -> Result<i64> {
     let _lock = ctx.data().mutations.lock().await;
-    if ctx.data().db.list(&ctx.guild_id().unwrap().get().to_string()).await?.iter().any(|s| {
-        s.id != sub.id
-            && s.app_id == sub.app_id
-            && s.branch == sub.branch
-            && s.channel_id == sub.channel_id
-    }) {
+    if ctx
+        .data()
+        .db
+        .list(&ctx.guild_id().unwrap().get().to_string())
+        .await?
+        .iter()
+        .any(|s| {
+            s.id != sub.id
+                && s.app_id == sub.app_id
+                && s.branch == sub.branch
+                && s.channel_id == sub.channel_id
+        })
+    {
         return Err(user_error("error.duplicate"));
     }
     let id = ctx.data().db.save(sub, Some(articles)).await?;
@@ -406,7 +413,12 @@ async fn edit(
 async fn remove(ctx: Context<'_>, id: i64) -> Result<()> {
     ctx.defer_ephemeral().await?;
     let _lock = ctx.data().mutations.lock().await;
-    if !ctx.data().db.remove(id, &ctx.guild_id().unwrap().get().to_string()).await? {
+    if !ctx
+        .data()
+        .db
+        .remove(id, &ctx.guild_id().unwrap().get().to_string())
+        .await?
+    {
         return Err(user_error("error.missing"));
     }
     ctx.data().clear(&format!("build:{id}")).await;
@@ -417,7 +429,11 @@ async fn remove(ctx: Context<'_>, id: i64) -> Result<()> {
 #[poise::command(slash_command)]
 async fn list(ctx: Context<'_>) -> Result<()> {
     ctx.defer_ephemeral().await?;
-    let subs = ctx.data().db.list(&ctx.guild_id().unwrap().get().to_string()).await?;
+    let subs = ctx
+        .data()
+        .db
+        .list(&ctx.guild_id().unwrap().get().to_string())
+        .await?;
     if subs.is_empty() {
         return reply(ctx, tr("reply.empty", &[])).await;
     }
@@ -483,9 +499,16 @@ async fn dayz(
     let mut added = 0;
     let mut skipped = 0;
     for id in [221100, 1024020, 223350, 1042420] {
-        if ctx.data().db.list(&ctx.guild_id().unwrap().get().to_string()).await?.iter().any(|s| {
-            s.app_id == id && s.branch == "public" && s.channel_id == channel.id.to_string()
-        }) {
+        if ctx
+            .data()
+            .db
+            .list(&ctx.guild_id().unwrap().get().to_string())
+            .await?
+            .iter()
+            .any(|s| {
+                s.app_id == id && s.branch == "public" && s.channel_id == channel.id.to_string()
+            })
+        {
             skipped += 1;
             continue;
         }
@@ -711,9 +734,9 @@ pub fn messages(
             };
             let budget = 2000_usize.saturating_sub(footer.encode_utf16().count());
             let body = crate::presentation::preview(excerpt, budget);
-            
+
             let mut msgs = Vec::new();
-            
+
             // Message 1: Heading + Cover Image
             let msg1 = serenity::CreateMessage::new()
                 .content(prefix)
@@ -776,12 +799,15 @@ pub fn messages(
             }
             vec![(base.content(mention).embed(embed), Vec::new())]
         }
-        Notification::Test => vec![(base.embed(
-            serenity::CreateEmbed::new()
-                .title(tr("test.title", &[]))
-                .description(tr("test.body", &[]))
-                .color(0xfee75c),
-        ), Vec::new())],
+        Notification::Test => vec![(
+            base.embed(
+                serenity::CreateEmbed::new()
+                    .title(tr("test.title", &[]))
+                    .description(tr("test.body", &[]))
+                    .color(0xfee75c),
+            ),
+            Vec::new(),
+        )],
     }
 }
 
@@ -870,10 +896,11 @@ mod tests {
     }
     #[test]
     fn test_never_pings_and_timestamps_are_native() {
-        let json = serde_json::to_value(messages(&Notification::Test, Some(123))[0].0.clone()).unwrap();
+        let json =
+            serde_json::to_value(messages(&Notification::Test, Some(123))[0].0.clone()).unwrap();
         assert_eq!(json["content"], "");
         assert_eq!(json["allowed_mentions"]["parse"], serde_json::json!([]));
-        
+
         let event = Notification::Build {
             name: "Café".into(),
             app_id: 42,
@@ -914,13 +941,15 @@ mod tests {
         let json_msg1 = serde_json::to_value(msgs[0].0.clone()).unwrap();
         let content1 = json_msg1["content"].as_str().unwrap();
         assert!(content1.starts_with("<@&18446744073709551615>\n## Update @\u{200b}everyone"));
-        
+
         let json_msg2 = serde_json::to_value(msgs[1].0.clone()).unwrap();
         let content2 = json_msg2["content"].as_str().unwrap();
         assert!(content2.contains("- Fixed collision"));
         assert!(content2.contains("Read full announcement"));
         assert!(content2.encode_utf16().count() <= 2000);
-        assert!(json_msg2.get("embeds").is_none() || json_msg2["embeds"].as_array().unwrap().is_empty());
+        assert!(
+            json_msg2.get("embeds").is_none() || json_msg2["embeds"].as_array().unwrap().is_empty()
+        );
         assert_eq!(json_msg2["flags"], 4);
     }
 
