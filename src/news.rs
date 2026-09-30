@@ -332,7 +332,7 @@ mod tests {
         let news = News::new().unwrap();
         match news.articles(221100, 0).await {
             Ok(articles) => println!("OK {} articles", articles.len()),
-            Err(e) => panic!("FAILED: {:?}", e),
+            Err(e) => panic!("FAILED: {e:?}"),
         }
     }
 }

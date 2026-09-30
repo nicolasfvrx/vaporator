@@ -90,7 +90,7 @@ mod tests {
         let media = super::Media::new().unwrap();
         let res = media.download("https://clan.akamai.steamstatic.com/images/4458811/47d4e70e31eb9c830d06130290b2dce124005e4e.png", 0).await;
         if let Err(e) = res {
-            panic!("Failed: {:?}", e);
+            panic!("Failed: {e:?}");
         }
     }
 }

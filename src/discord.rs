@@ -647,24 +647,24 @@ async fn test(
                 icon_url: app.icon_url.clone(),
             });
         }
-        if matches!(m, Mode::News | Mode::Both) {
-            if let Some(article) = ctx.data().news.latest_article(id as u32).await? {
-                let url = article.safe_url();
-                let formatted = crate::presentation::article(&article.contents);
-                let mut images = formatted.images;
-                if let Some(cover) = article.cover_image
-                    && !images.contains(&cover)
-                {
-                    images.insert(0, cover);
-                }
-                events.push(Notification::News {
-                    title: article.title,
-                    excerpt: formatted.text,
-                    url,
-                    published_at: article.date,
-                    images,
-                });
+        if matches!(m, Mode::News | Mode::Both)
+            && let Some(article) = ctx.data().news.latest_article(id as u32).await?
+        {
+            let url = article.safe_url();
+            let formatted = crate::presentation::article(&article.contents);
+            let mut images = formatted.images;
+            if let Some(cover) = article.cover_image
+                && !images.contains(&cover)
+            {
+                images.insert(0, cover);
             }
+            events.push(Notification::News {
+                title: article.title,
+                excerpt: formatted.text,
+                url,
+                published_at: article.date,
+                images,
+            });
         }
     }
     if events.is_empty() {
