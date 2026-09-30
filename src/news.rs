@@ -29,6 +29,7 @@ pub struct News {
 
 #[derive(Deserialize)]
 struct Response {
+    #[serde(default)]
     events: Vec<Event>,
 }
 
@@ -39,10 +40,16 @@ struct Event {
     clan_steamid: String,
     event_name: String,
     #[serde(default)]
-    announcement_body: String,
+    announcement_body: AnnouncementBody,
     rtime32_start_time: i64,
     #[serde(default)]
     jsondata: String,
+}
+
+#[derive(Deserialize, Default)]
+struct AnnouncementBody {
+    #[serde(default)]
+    body: String,
 }
 
 #[derive(Deserialize)]
@@ -121,7 +128,7 @@ impl News {
                         ),
                         gid: event.gid,
                         title: event.event_name,
-                        contents: event.announcement_body,
+                        contents: event.announcement_body.body,
                         date: event.rtime32_start_time,
                         cover_image,
                     });
@@ -233,7 +240,7 @@ mod tests {
     }
 
     fn item(id: i64, date: i64) -> serde_json::Value {
-        serde_json::json!({ "gid": id.to_string(), "event_name": "Update", "event_type": 28, "clan_steamid": "103582791433980219", "announcement_body": "Details", "rtime32_start_time": date,
+        serde_json::json!({ "gid": id.to_string(), "event_name": "Update", "event_type": 28, "clan_steamid": "103582791433980219", "announcement_body": { "body": "Details" }, "rtime32_start_time": date,
             "jsondata": "{}" })
     }
 
@@ -269,5 +276,14 @@ mod tests {
         // A saturated boundary cannot be paginated safely with this API.
         assert!(news.articles(42, timestamp - 100).await.is_err());
         task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn debug_live() {
+        let news = News::new().unwrap();
+        match news.articles(221100, 0).await {
+            Ok(articles) => println!("OK {} articles", articles.len()),
+            Err(e) => panic!("FAILED: {:?}", e),
+        }
     }
 }
