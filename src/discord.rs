@@ -627,7 +627,8 @@ async fn test(
         if matches!(m, Mode::News | Mode::Both) {
             if let Some(article) = ctx.data().news.latest_article(id as u32).await? {
                 let url = article.safe_url();
-                let mut images = crate::presentation::article(&article.contents).images;
+                let formatted = crate::presentation::article(&article.contents);
+                let mut images = formatted.images;
                 if let Some(cover) = article.cover_image
                     && !images.contains(&cover)
                 {
@@ -635,7 +636,7 @@ async fn test(
                 }
                 events.push(Notification::News {
                     title: article.title,
-                    excerpt: crate::news::excerpt(&article.contents),
+                    excerpt: formatted.text,
                     url,
                     published_at: article.date,
                     images,
@@ -713,9 +714,9 @@ pub fn messages(
             
             let mut msgs = Vec::new();
             
-            // Message 1: Heading + URL + Cover Image
+            // Message 1: Heading + Cover Image
             let msg1 = serenity::CreateMessage::new()
-                .content(format!("{prefix}\n<{source}>"))
+                .content(prefix)
                 .allowed_mentions(allowed.clone());
             let mut msg1_images = Vec::new();
             if let Some(cover) = images.first() {
