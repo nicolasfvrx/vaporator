@@ -154,7 +154,17 @@ pub fn article(contents: &str) -> ArticlePresentation {
             }
             continue;
         }
-        lines.push(if bullet { format!("- {line}") } else { line });
+        if bullet {
+            if lines.len() >= 2
+                && lines.last().is_some_and(|s| s.is_empty())
+                && lines[lines.len() - 2].starts_with("- ")
+            {
+                lines.pop();
+            }
+            lines.push(format!("- {line}"));
+        } else {
+            lines.push(line);
+        }
         bullet = false;
     }
     ArticlePresentation {
