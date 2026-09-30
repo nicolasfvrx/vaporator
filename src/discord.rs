@@ -647,9 +647,8 @@ async fn test(
         events.push(Notification::Test);
     }
     for event in events {
-        let mut outgoing = message(&event, None);
-        if let Notification::News { images, .. } = &event {
-            for (index, url) in images.iter().take(4).enumerate() {
+        for (mut outgoing, files) in messages(&event, None) {
+            for (index, url) in files.iter().enumerate() {
                 match ctx.data().media.download(url, index).await {
                     Ok(attachment) => outgoing = outgoing.add_file(attachment),
                     Err(error) => {
@@ -657,13 +656,16 @@ async fn test(
                     }
                 }
             }
+            channel.id.send_message(ctx.http(), outgoing).await?;
         }
-        channel.id.send_message(ctx.http(), outgoing).await?;
     }
     reply(ctx, tr("reply.test", &[])).await
 }
 
-pub fn message(event: &Notification, role: Option<u64>) -> serenity::CreateMessage {
+pub fn messages(
+    event: &Notification,
+    role: Option<u64>,
+) -> Vec<(serenity::CreateMessage, Vec<String>)> {
     let role = if matches!(event, Notification::Test) {
         None
     } else {
@@ -678,14 +680,14 @@ pub fn message(event: &Notification, role: Option<u64>) -> serenity::CreateMessa
         .replied_user(false);
     let base = serenity::CreateMessage::new()
         .content(mention.clone())
-        .allowed_mentions(allowed);
+        .allowed_mentions(allowed.clone());
     match event {
         Notification::News {
             title,
             excerpt,
             url,
             published_at,
-            ..
+            images,
         } => {
             let title = truncate(
                 &crate::presentation::escape(&title.replace(['\n', '\r'], " ")),
@@ -706,11 +708,32 @@ pub fn message(event: &Notification, role: Option<u64>) -> serenity::CreateMessa
             } else {
                 format!("{mention}\n{heading}")
             };
-            let budget = 2000_usize
-                .saturating_sub(prefix.encode_utf16().count() + footer.encode_utf16().count());
+            let budget = 2000_usize.saturating_sub(footer.encode_utf16().count());
             let body = crate::presentation::preview(excerpt, budget);
-            base.content(format!("{prefix}{body}{footer}"))
-                .flags(serenity::MessageFlags::SUPPRESS_EMBEDS)
+            
+            let mut msgs = Vec::new();
+            
+            // Message 1: Heading + URL + Cover Image
+            let msg1 = serenity::CreateMessage::new()
+                .content(format!("{prefix}\n<{source}>"))
+                .allowed_mentions(allowed.clone());
+            let mut msg1_images = Vec::new();
+            if let Some(cover) = images.first() {
+                msg1_images.push(cover.clone());
+            }
+            msgs.push((msg1, msg1_images));
+
+            // Message 2: Summary + Inline Images
+            if !body.is_empty() {
+                let msg2 = serenity::CreateMessage::new()
+                    .content(format!("{body}{footer}"))
+                    .flags(serenity::MessageFlags::SUPPRESS_EMBEDS)
+                    .allowed_mentions(allowed);
+                let msg2_images = images.iter().skip(1).take(3).cloned().collect();
+                msgs.push((msg2, msg2_images));
+            }
+
+            msgs
         }
         Notification::Build {
             name,
@@ -750,14 +773,14 @@ pub fn message(event: &Notification, role: Option<u64>) -> serenity::CreateMessa
             if let Some(url) = icon_url.as_deref().and_then(crate::presentation::image_url) {
                 embed = embed.thumbnail(url);
             }
-            base.content(mention).embed(embed)
+            vec![(base.content(mention).embed(embed), Vec::new())]
         }
-        Notification::Test => base.embed(
+        Notification::Test => vec![(base.embed(
             serenity::CreateEmbed::new()
                 .title(tr("test.title", &[]))
                 .description(tr("test.body", &[]))
                 .color(0xfee75c),
-        ),
+        ), Vec::new())],
     }
 }
 
@@ -781,33 +804,37 @@ async fn deliver_pending(service: &Service, http: &serenity::Http) -> Result<()>
         let event: Notification = serde_json::from_str(&delivery.payload)?;
         let channel = serenity::ChannelId::new(delivery.channel_id.parse()?);
         let role = delivery.role_id.as_ref().map(|r| r.parse()).transpose()?;
-        let mut outgoing = message(&event, role);
-        if let Notification::News { images, .. } = &event {
-            for (index, url) in images.iter().take(4).enumerate() {
+        let msgs = messages(&event, role);
+        let mut all_sent = true;
+        for (mut outgoing, files) in msgs {
+            for (index, url) in files.iter().enumerate() {
                 match service.media.download(url, index).await {
                     Ok(attachment) => outgoing = outgoing.add_file(attachment),
                     Err(error) => tracing::warn!(%error, "Skipping unavailable announcement image"),
                 }
             }
+            match tokio::time::timeout(
+                Duration::from_secs(45),
+                channel.send_message(http, outgoing),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                result => {
+                    let error = match result {
+                        Ok(Err(error)) => error.to_string(),
+                        Err(_) => "Discord delivery timed out".into(),
+                        _ => unreachable!(),
+                    };
+                    tracing::warn!(delivery_id=delivery.id, %error, "Discord notification failed");
+                    service.db.failed(&delivery, &error).await?;
+                    all_sent = false;
+                    break;
+                }
+            }
         }
-        match tokio::time::timeout(
-            Duration::from_secs(45),
-            channel.send_message(http, outgoing),
-        )
-        .await
-        {
-            Ok(Ok(_)) => {
-                service.db.delivered(delivery.id).await?;
-            }
-            result => {
-                let error = match result {
-                    Ok(Err(error)) => error.to_string(),
-                    Err(_) => "Discord delivery timed out".into(),
-                    _ => unreachable!(),
-                };
-                tracing::warn!(delivery_id=delivery.id, %error, "Discord notification failed");
-                service.db.failed(&delivery, &error).await?;
-            }
+        if all_sent {
+            service.db.delivered(delivery.id).await?;
         }
     }
     service.clear("delivery").await;
@@ -842,9 +869,10 @@ mod tests {
     }
     #[test]
     fn test_never_pings_and_timestamps_are_native() {
-        let json = serde_json::to_value(message(&Notification::Test, Some(123))).unwrap();
+        let json = serde_json::to_value(messages(&Notification::Test, Some(123))[0].0.clone()).unwrap();
         assert_eq!(json["content"], "");
         assert_eq!(json["allowed_mentions"]["parse"], serde_json::json!([]));
+        
         let event = Notification::Build {
             name: "Café".into(),
             app_id: 42,
@@ -857,7 +885,7 @@ mod tests {
                     .into(),
             ),
         };
-        let json = serde_json::to_value(message(&event, Some(456))).unwrap();
+        let json = serde_json::to_value(messages(&event, Some(456))[0].0.clone()).unwrap();
         assert_eq!(json["content"], "<@&456>");
         assert_eq!(
             json["embeds"][0]["thumbnail"]["url"],
@@ -881,14 +909,18 @@ mod tests {
             published_at: 123,
             images: vec![],
         };
-        let json = serde_json::to_value(message(&event, Some(u64::MAX))).unwrap();
-        let content = json["content"].as_str().unwrap();
-        assert!(content.starts_with("<@&18446744073709551615>\n## Update @\u{200b}everyone"));
-        assert!(content.contains("- Fixed collision"));
-        assert!(content.contains("Read full announcement"));
-        assert!(content.encode_utf16().count() <= 2000);
-        assert!(json.get("embeds").is_none() || json["embeds"].as_array().unwrap().is_empty());
-        assert_eq!(json["flags"], 4);
+        let msgs = messages(&event, Some(u64::MAX));
+        let json_msg1 = serde_json::to_value(msgs[0].0.clone()).unwrap();
+        let content1 = json_msg1["content"].as_str().unwrap();
+        assert!(content1.starts_with("<@&18446744073709551615>\n## Update @\u{200b}everyone"));
+        
+        let json_msg2 = serde_json::to_value(msgs[1].0.clone()).unwrap();
+        let content2 = json_msg2["content"].as_str().unwrap();
+        assert!(content2.contains("- Fixed collision"));
+        assert!(content2.contains("Read full announcement"));
+        assert!(content2.encode_utf16().count() <= 2000);
+        assert!(json_msg2.get("embeds").is_none() || json_msg2["embeds"].as_array().unwrap().is_empty());
+        assert_eq!(json_msg2["flags"], 4);
     }
 
     #[test]
@@ -897,7 +929,7 @@ mod tests {
         let old_build = r#"{"kind":"Build","name":"DayZ","app_id":221100,"branch":"public","old":"1","new":"2","detected_at":123}"#;
         for value in [old_news, old_build] {
             let event: Notification = serde_json::from_str(value).unwrap();
-            serde_json::to_value(message(&event, None)).unwrap();
+            let _ = messages(&event, None);
         }
     }
 }
