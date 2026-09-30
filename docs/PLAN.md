@@ -59,9 +59,10 @@ A build announcement uses an embed with the application name, a right-hand Steam
 
 ## News
 
-- Query `ISteamNews/GetNewsForApp` every 5 minutes and filter for official Steam Community posts.
+- Query `https://store.steampowered.com/events/ajaxgetpartnereventspageable/` every 5 minutes and filter for official Steam Community posts (`event_type` 28, 12, 13, 14, 34).
+- Extract the cover image from the event's `jsondata` and prepend it to the message.
 - Publish a normal Discord message with the title, formatted article preview, publication timestamp, and original link. Preserve headings, paragraphs, emphasis, and lists within the 2,000-character limit.
-- Attach up to four Steam-hosted images (JPEG, PNG, GIF, or WebP; at most 2 MiB each). Skip unavailable or unsupported images without blocking text delivery.
+- Attach up to four Steam-hosted images (including the cover image) (JPEG, PNG, GIF, or WebP; at most 2 MiB each). Skip unavailable or unsupported images without blocking text delivery.
 - Allow a separate source application for a dedicated server's news.
 - The DayZ preset uses the main DayZ news feed (`221100`) for both client subscriptions, deduplicated per channel. Live validation found the Experimental news endpoint (`1024020`) returns HTTP 403. Administrators can override the source with `/steam edit`.
 - Publish build announcements and articles separately without assuming an automatic association.

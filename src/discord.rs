@@ -628,7 +628,12 @@ async fn test(
             let articles = ctx.data().news.articles(id as u32, 0).await?;
             if let Some(article) = articles.into_iter().last() {
                 let url = article.safe_url();
-                let images = crate::presentation::article(&article.contents).images;
+                let mut images = crate::presentation::article(&article.contents).images;
+                if let Some(cover) = article.cover_image
+                    && !images.contains(&cover)
+                {
+                    images.insert(0, cover);
+                }
                 events.push(Notification::News {
                     title: article.title,
                     excerpt: crate::news::excerpt(&article.contents),

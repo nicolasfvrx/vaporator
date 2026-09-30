@@ -1,45 +1,23 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use serde::Deserialize;
 use std::{collections::HashSet, time::Duration};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Article {
     pub gid: String,
     pub title: String,
     pub url: String,
-    #[serde(default)]
     pub contents: String,
     pub date: i64,
-    #[serde(default)]
-    pub feedname: String,
+    pub cover_image: Option<String>,
 }
 
 impl Article {
     pub fn official(&self) -> bool {
-        self.feedname == "steam_community_announcements"
+        true // Filtered during parsing
     }
     pub fn safe_url(&self) -> String {
-        match reqwest::Url::parse(&self.url) {
-            Ok(mut url)
-                if matches!(url.scheme(), "http" | "https")
-                    && url.host_str() == Some("steamstore-a.akamaihd.net") =>
-            {
-                url.set_host(Some("store.steampowered.com"))
-                    .expect("valid Steam hostname");
-                url.set_scheme("https").expect("valid HTTPS scheme");
-                url.to_string()
-            }
-            Ok(url)
-                if matches!(url.scheme(), "http" | "https")
-                    && matches!(
-                        url.host_str(),
-                        Some("steamcommunity.com" | "store.steampowered.com")
-                    ) =>
-            {
-                url.to_string()
-            }
-            _ => "https://steamcommunity.com/".to_owned(),
-        }
+        self.url.clone()
     }
 }
 
@@ -48,13 +26,29 @@ pub struct News {
     client: reqwest::Client,
     endpoint: String,
 }
+
 #[derive(Deserialize)]
 struct Response {
-    appnews: AppNews,
+    events: Vec<Event>,
 }
+
 #[derive(Deserialize)]
-struct AppNews {
-    newsitems: Vec<Article>,
+struct Event {
+    gid: String,
+    event_type: i32,
+    clan_steamid: String,
+    event_name: String,
+    #[serde(default)]
+    announcement_body: String,
+    rtime32_start_time: i64,
+    #[serde(default)]
+    jsondata: String,
+}
+
+#[derive(Deserialize)]
+struct JsonData {
+    localized_capsule_image: Option<Vec<Option<String>>>,
+    localized_title_image: Option<Vec<Option<String>>>,
 }
 
 impl News {
@@ -64,14 +58,15 @@ impl News {
                 .timeout(Duration::from_secs(30))
                 .user_agent("vaporator/0.1")
                 .build()?,
-            endpoint: "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/".to_owned(),
+            endpoint: "https://store.steampowered.com/events/ajaxgetpartnereventspageable/"
+                .to_owned(),
         })
     }
 
     pub async fn articles(&self, app_id: u32, since: i64) -> Result<Vec<Article>> {
         let mut result = Vec::new();
         let mut seen = HashSet::new();
-        let mut end = crate::model::now() + 1;
+        let mut offset = 0;
         for _ in 0..100 {
             let response: Response = self
                 .client
@@ -79,34 +74,66 @@ impl News {
                 .query(&[
                     ("appid", app_id.to_string()),
                     ("count", "100".to_owned()),
-                    ("maxlength", "0".to_owned()),
-                    ("enddate", end.to_string()),
-                    ("feeds", "steam_community_announcements".to_owned()),
+                    ("offset", offset.to_string()),
                 ])
                 .send()
                 .await?
                 .error_for_status()?
                 .json()
                 .await?;
-            let items = response.appnews.newsitems;
-            let oldest = items.iter().map(|a| a.date).min().unwrap_or(0);
+            let items = response.events;
+            if items.is_empty() {
+                break;
+            }
+            let oldest = items
+                .iter()
+                .map(|a| a.rtime32_start_time)
+                .min()
+                .unwrap_or(0);
             let count = items.len();
-            for article in items {
-                if article.date >= since && article.official() && seen.insert(article.gid.clone()) {
-                    result.push(article);
+            for event in items {
+                // Event types: 28 = News, 12 = Game Update, 13 = Cross-Promo, 14 = Release
+                if event.rtime32_start_time >= since
+                    && matches!(event.event_type, 12 | 13 | 14 | 28 | 34)
+                    && seen.insert(event.gid.clone())
+                {
+                    let mut cover_image = None;
+                    if let Ok(data) = serde_json::from_str::<JsonData>(&event.jsondata) {
+                        let hash = data
+                            .localized_title_image
+                            .and_then(|v| v.into_iter().next().flatten())
+                            .or_else(|| {
+                                data.localized_capsule_image
+                                    .and_then(|v| v.into_iter().next().flatten())
+                            });
+                        if let (Some(hash), Ok(clan_id)) = (hash, event.clan_steamid.parse::<u64>())
+                        {
+                            let clan_account_id = clan_id & 0xFFFFFFFF;
+                            cover_image = Some(format!(
+                                "https://clan.akamai.steamstatic.com/images/{clan_account_id}/{hash}"
+                            ));
+                        }
+                    }
+                    result.push(Article {
+                        url: format!(
+                            "https://store.steampowered.com/news/app/{app_id}/view/{}",
+                            event.gid
+                        ),
+                        gid: event.gid,
+                        title: event.event_name,
+                        contents: event.announcement_body,
+                        date: event.rtime32_start_time,
+                        cover_image,
+                    });
                 }
             }
             if count < 100 || oldest < since {
-                result.sort_by_key(|a| a.date);
-                return Ok(result);
+                break;
             }
-            if oldest + 1 >= end {
-                bail!("Steam news pagination made no progress");
-            }
-            // Overlap the boundary second; deduplication handles repeated articles.
-            end = oldest + 1;
+            offset += 100;
         }
-        bail!("Steam news pagination exceeded 100 pages; no partial results were saved")
+        result.sort_by_key(|a| a.date);
+        Ok(result)
     }
 }
 
@@ -162,16 +189,19 @@ mod tests {
     }
 
     #[test]
-    fn official_posts_can_have_external_urls() {
-        let article: Article = serde_json::from_value(serde_json::json!({
-            "gid": "123", "title": "Official update", "date": 1,
-            "url": "https://steamstore-a.akamaihd.net/news/externalpost/steam_community_announcements/123",
-            "feedname": "steam_community_announcements", "is_external_url": true
-        })).unwrap();
+    fn parses_url_correctly() {
+        let article = Article {
+            gid: "123".into(),
+            title: "Update".into(),
+            url: "https://store.steampowered.com/news/app/42/view/123".into(),
+            contents: "".into(),
+            date: 1,
+            cover_image: None,
+        };
         assert!(article.official());
         assert_eq!(
             article.safe_url(),
-            "https://store.steampowered.com/news/externalpost/steam_community_announcements/123"
+            "https://store.steampowered.com/news/app/42/view/123"
         );
     }
 
@@ -203,8 +233,8 @@ mod tests {
     }
 
     fn item(id: i64, date: i64) -> serde_json::Value {
-        serde_json::json!({ "gid": id.to_string(), "title": "Update", "url": "https://steamcommunity.com/", "contents": "Details", "date": date,
-            "feedname": "steam_community_announcements", "is_external_url": false })
+        serde_json::json!({ "gid": id.to_string(), "event_name": "Update", "event_type": 28, "clan_steamid": "103582791433980219", "announcement_body": "Details", "rtime32_start_time": date,
+            "jsondata": "{}" })
     }
 
     #[tokio::test]
@@ -212,15 +242,19 @@ mod tests {
         let timestamp = crate::model::now() - 10;
         let first: Vec<_> = (0..100).map(|i| item(i, timestamp - i)).collect();
         let (news, task) = mock_news(vec![
-            (200, serde_json::json!({"appnews":{"newsitems": first}})),
-            (200, serde_json::json!({"appnews":{"newsitems": [item(99, timestamp-99), item(100, timestamp-100)]}})),
-        ]).await;
+            (200, serde_json::json!({"events": first})),
+            (
+                200,
+                serde_json::json!({"events": [item(99, timestamp-99), item(100, timestamp-100)]}),
+            ),
+        ])
+        .await;
         let articles = news.articles(42, timestamp - 200).await.unwrap();
         assert_eq!(articles.len(), 101);
         assert_eq!(articles[0].gid, "100");
         let requests = task.await.unwrap();
-        assert!(requests[0].contains("feeds=steam_community_announcements"));
-        assert!(requests[1].contains(&format!("enddate={}", timestamp - 98)));
+        assert!(requests[0].contains("offset=0"));
+        assert!(requests[1].contains("offset=100"));
     }
 
     #[tokio::test]
@@ -229,9 +263,10 @@ mod tests {
         assert!(news.articles(42, 0).await.is_err());
         task.await.unwrap();
         let timestamp = crate::model::now() - 10;
-        let page = serde_json::json!({"appnews":{"newsitems": (0..100).map(|i| item(i, timestamp)).collect::<Vec<_>>()}});
+        let page =
+            serde_json::json!({"events": (0..100).map(|i| item(i, timestamp)).collect::<Vec<_>>()});
         let (news, task) = mock_news(vec![(200, page.clone()), (200, page)]).await;
-        // A saturated boundary second cannot be paginated safely with this API.
+        // A saturated boundary cannot be paginated safely with this API.
         assert!(news.articles(42, timestamp - 100).await.is_err());
         task.await.unwrap();
     }

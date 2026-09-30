@@ -160,12 +160,18 @@ impl Db {
                     > 0;
                 if sub.news_initialized && sub.news() && added && article.date >= now() - 86400 {
                     let formatted = crate::presentation::article(&article.contents);
+                    let mut images = formatted.images;
+                    if let Some(cover) = &article.cover_image
+                        && !images.contains(cover)
+                    {
+                        images.insert(0, cover.clone());
+                    }
                     let event = Notification::News {
                         title: article.title.clone(),
                         excerpt: formatted.text,
                         url: article.safe_url(),
                         published_at: article.date,
-                        images: formatted.images,
+                        images,
                     };
                     sqlx::query("INSERT OR IGNORE INTO outbox(subscription_id,event_key,channel_id,role_id,payload,created_at) VALUES (?,?,?,?,?,?)")
                         .bind(sub.id).bind(format!("news:{}:{}", article.gid, sub.channel_id))
@@ -274,7 +280,7 @@ mod tests {
             url: "https://steamcommunity.com/games/42/announcements/detail/1".into(),
             contents: "[b]Patch[/b]".into(),
             date: time,
-            feedname: "steam_community_announcements".into(),
+            cover_image: None,
         }
     }
 
@@ -328,20 +334,10 @@ mod tests {
         assert_eq!(db.pending_count().await.unwrap(), 0);
         let fresh = article("new", now());
         let stale = article("stale", now() - 90000);
-        let mut press = article("press", now());
-        press.feedname = "press".into();
         for sub in [&a, &b, &c] {
-            db.record_news(
-                sub,
-                &[
-                    existing.clone(),
-                    fresh.clone(),
-                    stale.clone(),
-                    press.clone(),
-                ],
-            )
-            .await
-            .unwrap();
+            db.record_news(sub, &[existing.clone(), fresh.clone(), stale.clone()])
+                .await
+                .unwrap();
             db.record_news(sub, std::slice::from_ref(&fresh))
                 .await
                 .unwrap();
