@@ -215,7 +215,8 @@ async fn validate_destination(
     if !permissions.contains(
         serenity::Permissions::VIEW_CHANNEL
             | serenity::Permissions::SEND_MESSAGES
-            | serenity::Permissions::EMBED_LINKS,
+            | serenity::Permissions::EMBED_LINKS
+            | serenity::Permissions::ATTACH_FILES,
     ) {
         return Err(user_error("error.permissions"));
     }
@@ -240,6 +241,7 @@ async fn prepare(ctx: Context<'_>, sub: &mut Subscription) -> Result<Vec<crate::
         .await
         .map_err(|_| user_error("error.app"))?;
     sub.name = app.name;
+    sub.icon_url = app.icon_url;
     if sub.builds() {
         sub.build_id = Some(
             app.branches
@@ -312,6 +314,7 @@ async fn follow(
         id: 0,
         app_id,
         name: String::new(),
+        icon_url: None,
         branch: branch.unwrap_or_else(|| "public".into()),
         mode: mode.unwrap_or(Mode::Both).as_str().into(),
         news_app_id: news_app_id.unwrap_or(app_id),
@@ -496,6 +499,7 @@ async fn dayz(
             id: 0,
             app_id: id,
             name: app.name,
+            icon_url: app.icon_url,
             branch: "public".into(),
             mode: if client_app { "both" } else { "builds" }.into(),
             news_app_id: if client_app { 221100 } else { id },
@@ -594,18 +598,116 @@ async fn status(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(slash_command)]
-async fn test(ctx: Context<'_>, channel: serenity::GuildChannel) -> Result<()> {
+async fn test(
+    ctx: Context<'_>,
+    channel: serenity::GuildChannel,
+    mode: Option<Mode>,
+    app_id: Option<i64>,
+) -> Result<()> {
     ctx.defer_ephemeral().await?;
     validate_destination(ctx, &channel, None).await?;
-    channel
-        .id
-        .send_message(ctx.http(), message(&Notification::Test, None))
-        .await?;
+    let mut events = Vec::new();
+    if let (Some(m), Some(id)) = (mode, app_id) {
+        let steam = client(ctx).await?;
+        let app = steam
+            .app(crate::discord::app_id(id)?)
+            .await
+            .map_err(|_| user_error("error.app"))?;
+        if matches!(m, Mode::Builds | Mode::Both) {
+            events.push(Notification::Build {
+                name: app.name.clone(),
+                app_id: id as u32,
+                branch: "public".into(),
+                old: "1234567".into(),
+                new: "1234568".into(),
+                detected_at: crate::model::now(),
+                icon_url: app.icon_url.clone(),
+            });
+        }
+        if matches!(m, Mode::News | Mode::Both) {
+            let articles = ctx.data().news.articles(id as u32, 0).await?;
+            if let Some(article) = articles.into_iter().last() {
+                let url = article.safe_url();
+                let images = crate::presentation::article(&article.contents).images;
+                events.push(Notification::News {
+                    title: article.title,
+                    excerpt: crate::news::excerpt(&article.contents),
+                    url,
+                    published_at: article.date,
+                    images,
+                });
+            }
+        }
+    }
+    if events.is_empty() {
+        events.push(Notification::Test);
+    }
+    for event in events {
+        let mut outgoing = message(&event, None);
+        if let Notification::News { images, .. } = &event {
+            for (index, url) in images.iter().take(4).enumerate() {
+                match ctx.data().media.download(url, index).await {
+                    Ok(attachment) => outgoing = outgoing.add_file(attachment),
+                    Err(error) => {
+                        tracing::warn!(%error, "Skipping unavailable announcement image in test")
+                    }
+                }
+            }
+        }
+        channel.id.send_message(ctx.http(), outgoing).await?;
+    }
     reply(ctx, tr("reply.test", &[])).await
 }
 
 pub fn message(event: &Notification, role: Option<u64>) -> serenity::CreateMessage {
-    let (title, body, color) = match event {
+    let role = if matches!(event, Notification::Test) {
+        None
+    } else {
+        role
+    };
+    let mention = role.map(|r| format!("<@&{r}>")).unwrap_or_default();
+    let allowed = serenity::CreateAllowedMentions::new()
+        .everyone(false)
+        .all_users(false)
+        .all_roles(false)
+        .roles(role.map(serenity::RoleId::new))
+        .replied_user(false);
+    let base = serenity::CreateMessage::new()
+        .content(mention.clone())
+        .allowed_mentions(allowed);
+    match event {
+        Notification::News {
+            title,
+            excerpt,
+            url,
+            published_at,
+            ..
+        } => {
+            let title = truncate(
+                &crate::presentation::escape(&title.replace(['\n', '\r'], " ")),
+                150,
+            );
+            let source = if url.len() <= 400 {
+                url.as_str()
+            } else {
+                "https://steamcommunity.com/"
+            };
+            let heading = tr(
+                "news.heading",
+                &[("title", &title), ("time", &published_at.to_string())],
+            );
+            let footer = tr("news.footer", &[("url", source)]);
+            let prefix = if mention.is_empty() {
+                heading
+            } else {
+                format!("{mention}\n{heading}")
+            };
+            let budget = 2000_usize
+                .saturating_sub(prefix.encode_utf16().count() + footer.encode_utf16().count());
+            let body = crate::presentation::preview(excerpt, budget);
+            base.content(format!("{prefix}{body}{footer}"))
+                .flags(serenity::MessageFlags::SUPPRESS_EMBEDS)
+        }
         Notification::Build {
             name,
             app_id,
@@ -613,60 +715,46 @@ pub fn message(event: &Notification, role: Option<u64>) -> serenity::CreateMessa
             old,
             new,
             detected_at,
-        } => (
-            tr("build.title", &[]),
-            tr(
-                "build.body",
-                &[
-                    ("name", &truncate(&excerpt(name), 200)),
-                    ("app_id", &app_id.to_string()),
-                    ("branch", &truncate(&excerpt(branch), 100)),
-                    ("old", old),
-                    ("new", new),
-                    ("time", &detected_at.to_string()),
-                ],
-            ),
-            0x57f287,
-        ),
-        Notification::News {
-            title,
-            excerpt,
-            url,
-            published_at,
-        } => (
-            truncate(title, 256),
-            tr(
-                "news.body",
-                &[
-                    ("excerpt", excerpt),
-                    ("url", url),
-                    ("time", &published_at.to_string()),
-                ],
-            ),
-            0x5865f2,
-        ),
-        Notification::Test => (tr("test.title", &[]), tr("test.body", &[]), 0xfee75c),
-    };
-    let role = if matches!(event, Notification::Test) {
-        None
-    } else {
-        role
-    };
-    let allowed = serenity::CreateAllowedMentions::new()
-        .everyone(false)
-        .all_users(false)
-        .all_roles(false)
-        .roles(role.map(serenity::RoleId::new))
-        .replied_user(false);
-    serenity::CreateMessage::new()
-        .content(role.map(|r| format!("<@&{r}>")).unwrap_or_default())
-        .embed(
+            icon_url,
+        } => {
+            let mut embed = serenity::CreateEmbed::new()
+                .author(serenity::CreateEmbedAuthor::new(tr("build.label", &[])))
+                .title(truncate(&crate::presentation::escape(name), 200))
+                .url(format!("https://steamcommunity.com/app/{app_id}"))
+                .description(tr(
+                    "build.description",
+                    &[
+                        ("branch", &truncate(&excerpt(branch), 100)),
+                        ("time", &detected_at.to_string()),
+                    ],
+                ))
+                .field(
+                    tr("build.previous", &[]),
+                    format!("`{}`", truncate(old, 50)),
+                    true,
+                )
+                .field(
+                    tr("build.current", &[]),
+                    format!("`{}`", truncate(new, 50)),
+                    true,
+                )
+                .footer(serenity::CreateEmbedFooter::new(tr(
+                    "build.footer",
+                    &[("app_id", &app_id.to_string())],
+                )))
+                .color(0x57f287);
+            if let Some(url) = icon_url.as_deref().and_then(crate::presentation::image_url) {
+                embed = embed.thumbnail(url);
+            }
+            base.content(mention).embed(embed)
+        }
+        Notification::Test => base.embed(
             serenity::CreateEmbed::new()
-                .title(title)
-                .description(body)
-                .color(color),
-        )
-        .allowed_mentions(allowed)
+                .title(tr("test.title", &[]))
+                .description(tr("test.body", &[]))
+                .color(0xfee75c),
+        ),
+    }
 }
 
 pub async fn delivery_worker(service: Data) {
@@ -689,9 +777,18 @@ async fn deliver_pending(service: &Service, http: &serenity::Http) -> Result<()>
         let event: Notification = serde_json::from_str(&delivery.payload)?;
         let channel = serenity::ChannelId::new(delivery.channel_id.parse()?);
         let role = delivery.role_id.as_ref().map(|r| r.parse()).transpose()?;
+        let mut outgoing = message(&event, role);
+        if let Notification::News { images, .. } = &event {
+            for (index, url) in images.iter().take(4).enumerate() {
+                match service.media.download(url, index).await {
+                    Ok(attachment) => outgoing = outgoing.add_file(attachment),
+                    Err(error) => tracing::warn!(%error, "Skipping unavailable announcement image"),
+                }
+            }
+        }
         match tokio::time::timeout(
             Duration::from_secs(45),
-            channel.send_message(http, message(&event, role)),
+            channel.send_message(http, outgoing),
         )
         .await
         {
@@ -751,14 +848,52 @@ mod tests {
             old: "1".into(),
             new: "2".into(),
             detected_at: 123,
+            icon_url: Some(
+                "https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/42/icon.jpg"
+                    .into(),
+            ),
         };
         let json = serde_json::to_value(message(&event, Some(456))).unwrap();
         assert_eq!(json["content"], "<@&456>");
+        assert_eq!(
+            json["embeds"][0]["thumbnail"]["url"],
+            "https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/42/icon.jpg"
+        );
+        assert_eq!(json["embeds"][0]["fields"][1]["name"], "New build");
         assert!(
             json["embeds"][0]["description"]
                 .as_str()
                 .unwrap()
                 .contains("<t:123:F>")
         );
+    }
+
+    #[test]
+    fn announcements_are_plain_messages_with_bounded_unicode_content() {
+        let event = Notification::News {
+            title: "Update @everyone".into(),
+            excerpt: "### Fixes\n- Fixed collision\n\n".repeat(200),
+            url: "https://steamcommunity.com/games/42/announcements/detail/123".into(),
+            published_at: 123,
+            images: vec![],
+        };
+        let json = serde_json::to_value(message(&event, Some(u64::MAX))).unwrap();
+        let content = json["content"].as_str().unwrap();
+        assert!(content.starts_with("<@&18446744073709551615>\n## Update @\u{200b}everyone"));
+        assert!(content.contains("- Fixed collision"));
+        assert!(content.contains("Read full announcement"));
+        assert!(content.encode_utf16().count() <= 2000);
+        assert!(json.get("embeds").is_none() || json["embeds"].as_array().unwrap().is_empty());
+        assert_eq!(json["flags"], 4);
+    }
+
+    #[test]
+    fn existing_queued_events_remain_readable() {
+        let old_news = r#"{"kind":"News","title":"Update","excerpt":"Details","url":"https://steamcommunity.com/","published_at":123}"#;
+        let old_build = r#"{"kind":"Build","name":"DayZ","app_id":221100,"branch":"public","old":"1","new":"2","detected_at":123}"#;
+        for value in [old_news, old_build] {
+            let event: Notification = serde_json::from_str(value).unwrap();
+            serde_json::to_value(message(&event, None)).unwrap();
+        }
     }
 }

@@ -79,7 +79,7 @@ impl News {
                 .query(&[
                     ("appid", app_id.to_string()),
                     ("count", "100".to_owned()),
-                    ("maxlength", "4000".to_owned()),
+                    ("maxlength", "0".to_owned()),
                     ("enddate", end.to_string()),
                     ("feeds", "steam_community_announcements".to_owned()),
                 ])

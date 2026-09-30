@@ -19,6 +19,7 @@ pub struct Service {
     pub config: Config,
     pub db: Db,
     pub news: News,
+    pub media: crate::media::Media,
     pub steam: RwLock<Option<Steam>>,
     pub health: RwLock<Health>,
     pub mutations: Mutex<()>,
@@ -40,6 +41,7 @@ impl Service {
             config,
             db,
             news: News::new()?,
+            media: crate::media::Media::new()?,
             steam: RwLock::new(None),
             health: RwLock::new(Health::default()),
             mutations: Mutex::new(()),
@@ -133,7 +135,9 @@ async fn monitor_builds(service: &Service, client: &Steam) -> Result<()> {
                 .filter(|b| !b.password_required)
             {
                 Some(branch) => {
-                    service.db.record_build(sub, &branch.build_id).await?;
+                    let mut observed = sub.clone();
+                    observed.icon_url = app.icon_url.clone();
+                    service.db.record_build(&observed, &branch.build_id).await?;
                     service.clear(&key).await;
                 }
                 None => {

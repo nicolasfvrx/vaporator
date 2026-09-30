@@ -4,7 +4,7 @@
 
 Create an application and bot in the [Discord Developer Portal](https://discord.com/developers/applications). Install it on your server with the `bot` and `applications.commands` OAuth2 scopes. In Discord, enable Developer Mode and copy your server ID into `DISCORD_GUILD_ID`.
 
-The bot needs View Channel, Send Messages, and Embed Links in each destination channel. The optional mention role must be mentionable, unless the bot has Mention Everyone in that channel. Vaporator never permits arbitrary user or everyone mentions in generated notifications.
+The bot needs View Channel, Send Messages, Embed Links, and Attach Files in each destination channel. The optional mention role must be mentionable, unless the bot has Mention Everyone in that channel. Vaporator never permits arbitrary user or everyone mentions in generated notifications.
 
 Commands are registered only in the configured server and checked for administrator permission at runtime. No Message Content or Server Members privileged intent is required. The database is bound to the first configured server ID; use a separate volume for a different server.
 
@@ -45,6 +45,16 @@ Adding a subscription establishes a silent baseline. Editing deliberately resets
 Build notifications compare build IDs rather than all metadata. A rollback is a notification-worthy change. The bot performs a full reconciliation after connecting and every 15 minutes, and retries inaccessible subscriptions. Steam changes and news are independent; the bot does not infer that a news post describes a particular build.
 
 News polling uses the official `steam_community_announcements` feed and fetches the past 24 hours with pagination. The same article is posted once per channel, even when several subscriptions share a feed. Steam's `is_external_url` flag does not determine whether an article is official. Source article text keeps its original language.
+
+## Notification appearance
+
+Announcements are normal Discord messages, not embeds. Steam HTML and BBCode are converted to readable headings, paragraphs, emphasis, lists, and links. The title, publication time, and source link remain visible when long article text is shortened to fit Discord's 2,000-character limit. Automatic link previews are suppressed.
+
+Up to four unique Steam-hosted article images are uploaded as attachments below the text. JPEG, PNG, GIF, and WebP are supported, with a 2 MiB limit per image. Unavailable, oversized, or unsupported images are skipped so the text can still be delivered. Images hosted outside the supported Steam domains remain available in the original article.
+
+Build notifications use a green embed with the game name, the Steam icon as a right-hand thumbnail when available, the branch and detection time, and separate previous/new build fields. The title links to the application's Steam Community page.
+
+Existing databases upgrade automatically. Previously queued notifications remain readable; older queued build events may have no icon. Icons for existing subscriptions are populated on subsequent Steam metadata refreshes.
 
 ## Steam authentication
 

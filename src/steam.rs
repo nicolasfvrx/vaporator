@@ -13,6 +13,7 @@ use steam_vent_proto_steam::steammessages_clientserver_appinfo::{
 pub struct App {
     pub id: u32,
     pub name: String,
+    pub icon_url: Option<String>,
     pub branches: BTreeMap<String, Branch>,
 }
 
@@ -128,6 +129,8 @@ struct Info {
 #[derive(Deserialize)]
 struct Common {
     name: String,
+    icon: Option<String>,
+    clienticon: Option<String>,
 }
 #[derive(Default, Deserialize)]
 struct Depots {
@@ -161,6 +164,9 @@ fn parse_app(id: u32, text: &str) -> Result<App> {
         .collect();
     Ok(App {
         id,
+        icon_url: root.appinfo.common.icon.or(root.appinfo.common.clienticon)
+            .filter(|hash| hash.len() == 40 && hash.bytes().all(|c| c.is_ascii_hexdigit()))
+            .map(|hash| format!("https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/{id}/{hash}.jpg")),
         name: root.appinfo.common.name,
         branches,
     })

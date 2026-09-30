@@ -6,8 +6,10 @@ mod config;
 mod db;
 mod discord;
 mod i18n;
+mod media;
 mod model;
 mod news;
+mod presentation;
 mod service;
 mod steam;
 

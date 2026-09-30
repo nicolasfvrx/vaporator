@@ -14,7 +14,7 @@ A Discord bot written in Rust to track Steam application builds and official new
 ## Quick start
 
 1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications), obtain its bot token, and install it on your server with the `bot` and `applications.commands` scopes.
-2. Grant the bot **View Channel**, **Send Messages**, and **Embed Links** in the destination channels. No privileged gateway intents are required.
+2. Grant the bot **View Channel**, **Send Messages**, **Embed Links**, and **Attach Files** in the destination channels. No privileged gateway intents are required.
 3. Copy `.env.example` to `.env`, then set `DISCORD_TOKEN` and `DISCORD_GUILD_ID`. Keep the token private.
 4. Start the bot:
 
@@ -55,6 +55,8 @@ On Linux, native dependencies require a C/C++ toolchain and CMake (for example `
 - Use English for repository content, documentation, code comments, commit messages, and bot commands and messages. Steam articles retain their original language.
 
 ## Limits
+
+Announcements use normal Discord messages with headings, paragraphs, lists, a source link, and up to four attached Steam-hosted images. Long articles are shortened to fit a single message. Build updates use a green embed with the game icon on the right and separate previous/new build fields.
 
 V1 runs one bot process for one Discord server and database. It does not monitor Workshop items, access password-protected branches, install updates, or restart game servers. PICS reports observed state; intermediate builds during an outage may be unavailable. Discord can receive a duplicate if a delivery succeeds immediately before its database acknowledgment is interrupted.
 

@@ -5,6 +5,7 @@ pub struct Subscription {
     pub id: i64,
     pub app_id: i64,
     pub name: String,
+    pub icon_url: Option<String>,
     pub branch: String,
     pub mode: String,
     pub news_app_id: i64,
@@ -34,12 +35,16 @@ pub enum Notification {
         old: String,
         new: String,
         detected_at: i64,
+        #[serde(default)]
+        icon_url: Option<String>,
     },
     News {
         title: String,
         excerpt: String,
         url: String,
         published_at: i64,
+        #[serde(default)]
+        images: Vec<String>,
     },
     Test,
 }

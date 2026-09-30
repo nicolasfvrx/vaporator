@@ -50,14 +50,14 @@ impl Db {
     pub async fn save(&self, sub: &Subscription, baseline: Option<&[Article]>) -> Result<i64> {
         let mut tx = self.0.begin().await?;
         let id = if sub.id == 0 {
-            let result = sqlx::query("INSERT INTO subscriptions(app_id,name,branch,mode,news_app_id,channel_id,role_id,build_id) VALUES (?,?,?,?,?,?,?,?)")
+            let result = sqlx::query("INSERT INTO subscriptions(app_id,name,branch,mode,news_app_id,channel_id,role_id,build_id,icon_url) VALUES (?,?,?,?,?,?,?,?,?)")
                 .bind(sub.app_id).bind(&sub.name).bind(&sub.branch).bind(&sub.mode).bind(sub.news_app_id)
-                .bind(&sub.channel_id).bind(&sub.role_id).bind(&sub.build_id).execute(&mut *tx).await?;
+                .bind(&sub.channel_id).bind(&sub.role_id).bind(&sub.build_id).bind(&sub.icon_url).execute(&mut *tx).await?;
             result.last_insert_rowid()
         } else {
-            let result = sqlx::query("UPDATE subscriptions SET app_id=?,name=?,branch=?,mode=?,news_app_id=?,channel_id=?,role_id=?,build_id=?,news_initialized=0,revision=revision+1 WHERE id=? AND revision=?")
+            let result = sqlx::query("UPDATE subscriptions SET app_id=?,name=?,branch=?,mode=?,news_app_id=?,channel_id=?,role_id=?,build_id=?,icon_url=?,news_initialized=0,revision=revision+1 WHERE id=? AND revision=?")
                 .bind(sub.app_id).bind(&sub.name).bind(&sub.branch).bind(&sub.mode).bind(sub.news_app_id)
-                .bind(&sub.channel_id).bind(&sub.role_id).bind(&sub.build_id).bind(sub.id).bind(sub.revision).execute(&mut *tx).await?;
+                .bind(&sub.channel_id).bind(&sub.role_id).bind(&sub.build_id).bind(&sub.icon_url).bind(sub.id).bind(sub.revision).execute(&mut *tx).await?;
             ensure!(
                 result.rows_affected() == 1,
                 "Subscription changed concurrently; retry the command"
@@ -120,16 +120,20 @@ impl Db {
                     old: old.clone(),
                     new: build.to_owned(),
                     detected_at: now(),
+                    icon_url: expected.icon_url.clone().or(sub.icon_url.clone()),
                 };
                 // The outbox row ID provides a unique transition identity, including repeated rollbacks.
                 sqlx::query("INSERT INTO outbox(subscription_id,event_key,channel_id,role_id,payload,created_at) VALUES (?,lower(hex(randomblob(16))),?,?,?,?)")
                         .bind(sub.id).bind(&sub.channel_id).bind(&sub.role_id).bind(serde_json::to_string(&event)?).bind(now()).execute(&mut *tx).await?;
             }
-            sqlx::query("UPDATE subscriptions SET build_id=? WHERE id=?")
-                .bind(build)
-                .bind(sub.id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "UPDATE subscriptions SET build_id=?,icon_url=COALESCE(?,icon_url) WHERE id=?",
+            )
+            .bind(build)
+            .bind(&expected.icon_url)
+            .bind(sub.id)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         Ok(())
@@ -155,11 +159,13 @@ impl Db {
                 .rows_affected()
                     > 0;
                 if sub.news_initialized && sub.news() && added && article.date >= now() - 86400 {
+                    let formatted = crate::presentation::article(&article.contents);
                     let event = Notification::News {
                         title: article.title.clone(),
-                        excerpt: crate::news::excerpt(&article.contents),
+                        excerpt: formatted.text,
                         url: article.safe_url(),
                         published_at: article.date,
+                        images: formatted.images,
                     };
                     sqlx::query("INSERT OR IGNORE INTO outbox(subscription_id,event_key,channel_id,role_id,payload,created_at) VALUES (?,?,?,?,?,?)")
                         .bind(sub.id).bind(format!("news:{}:{}", article.gid, sub.channel_id))
@@ -247,6 +253,7 @@ mod tests {
             id: 0,
             app_id: 42,
             name: "Café".into(),
+            icon_url: None,
             branch: "public".into(),
             mode: "both".into(),
             news_app_id: 42,
@@ -417,5 +424,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(db.pending_count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn upgrades_existing_subscriptions_and_refreshes_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(dir.path().join("vaporator.sqlite3"))
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        let all = sqlx::migrate!();
+        let initial = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(all.iter().take(1).cloned().collect()),
+            ..sqlx::migrate::Migrator::DEFAULT
+        };
+        initial.run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO subscriptions(app_id,name,branch,mode,news_app_id,channel_id,build_id) VALUES (42,'Existing game','public','builds',42,'123','1')").execute(&pool).await.unwrap();
+        pool.close().await;
+        let db = Db::open(dir.path()).await.unwrap();
+        let mut sub = db.list().await.unwrap().remove(0);
+        assert!(sub.icon_url.is_none());
+        sub.icon_url = Some("https://cdn.akamai.steamstatic.com/icon.jpg".into());
+        db.record_build(&sub, "2").await.unwrap();
+        assert_eq!(
+            db.get(sub.id).await.unwrap().unwrap().icon_url,
+            sub.icon_url
+        );
+        let event: Notification =
+            serde_json::from_str(&db.pending().await.unwrap()[0].payload).unwrap();
+        assert!(matches!(
+            event,
+            Notification::Build {
+                icon_url: Some(_),
+                ..
+            }
+        ));
     }
 }

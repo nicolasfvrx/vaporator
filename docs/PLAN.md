@@ -55,12 +55,13 @@ The DayZ preset tracks the `public` branch of these four applications:
 | DayZ Server | 223350 |
 | DayZ Experimental Server | 1042420 |
 
-A build announcement includes the application, branch, previous and new build IDs, and detection time. Messages are in English. Mentions are disabled by default and limited to the explicitly configured role.
+A build announcement uses an embed with the application name, a right-hand Steam icon when available, the branch, separate previous/new build fields, and detection time. Messages are in English. Mentions are disabled by default and limited to the explicitly configured role.
 
 ## News
 
 - Query `ISteamNews/GetNewsForApp` every 5 minutes and filter for official Steam Community posts.
-- Publish the title, a short sanitized excerpt, and the original link in the article's language.
+- Publish a normal Discord message with the title, formatted article preview, publication timestamp, and original link. Preserve headings, paragraphs, emphasis, and lists within the 2,000-character limit.
+- Attach up to four Steam-hosted images (JPEG, PNG, GIF, or WebP; at most 2 MiB each). Skip unavailable or unsupported images without blocking text delivery.
 - Allow a separate source application for a dedicated server's news.
 - The DayZ preset uses the main DayZ news feed (`221100`) for both client subscriptions, deduplicated per channel. Live validation found the Experimental news endpoint (`1024020`) returns HTTP 403. Administrators can override the source with `/steam edit`.
 - Publish build announcements and articles separately without assuming an automatic association.
