@@ -7,6 +7,7 @@ A Discord bot written in Rust to track Steam application builds and official new
 - Track Steam build changes through a persistent PICS connection, including rollbacks.
 - Follow official Steam Community announcements, independently of build notifications.
 - Configure applications, branches, destination channels, and optional role mentions through administrator slash commands.
+- Use one bot across multiple Discord servers, with subscriptions managed separately in each server.
 - Install a DayZ preset covering the stable and experimental clients and servers.
 - Persist subscriptions, baselines, and pending deliveries in SQLite. Retry failures after restarts.
 - Run on Linux with Docker, or directly with Rust 1.88 or newer.
@@ -15,7 +16,7 @@ A Discord bot written in Rust to track Steam application builds and official new
 
 1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications), obtain its bot token, and install it on your server with the `bot` and `applications.commands` scopes.
 2. Grant the bot **View Channel**, **Send Messages**, **Embed Links**, and **Attach Files** in the destination channels. No privileged gateway intents are required.
-3. Copy `.env.example` to `.env`, then set `DISCORD_TOKEN` and `DISCORD_GUILD_ID`. Keep the token private.
+3. Copy `.env.example` to `.env`, then set `DISCORD_TOKEN`. Keep the token private. No server ID is required; slash commands are registered globally.
 4. Start the bot:
 
 ```sh
@@ -56,10 +57,10 @@ On Linux, native dependencies require a C/C++ toolchain and CMake (for example `
 
 ## Limits
 
-Announcements use normal Discord messages with headings, paragraphs, lists, a source link, and up to four attached Steam-hosted images. Long articles are shortened to fit a single message. Build updates use a green embed with the game icon on the right and separate previous/new build fields.
+Announcements use a heading message with the first image, followed by an article preview with the source link and remaining images when the article has text. Up to four Steam-hosted images are attached in total. Long previews are shortened to fit Discord's 2,000-character message limit. Build updates use a green embed with the game icon on the right and separate previous/new build fields.
 
-V1 runs one bot process for one Discord server and database. It does not monitor Workshop items, access password-protected branches, install updates, or restart game servers. PICS reports observed state; intermediate builds during an outage may be unavailable. Discord can receive a duplicate if a delivery succeeds immediately before its database acknowledgment is interrupted.
+V1 runs one bot process and database for multiple Discord servers. Administrators manage only their server's subscriptions; `/steam status` reports shared process health, pending deliveries, and errors across all servers. It does not monitor Workshop items, access password-protected branches, install updates, or restart game servers. PICS reports observed state; intermediate builds during an outage may be unavailable. Discord can receive duplicates if delivery is interrupted after sending a message but before recording success, including between the two messages of an article.
 
 ## Language and internationalization
 
-V1 uses English throughout its interface, including Discord commands, options, descriptions, help, replies, errors, and notifications. Bot-authored display text will use a central message catalog so additional languages can be added later, with English as the default and fallback. Command identifiers remain in English. Original Steam articles are quoted in their source language.
+V1 uses English throughout its interface, including Discord commands, options, descriptions, help, replies, errors, and notifications. Bot-authored display text uses the central message catalog in `locales/en.json`, with English as the default and fallback. Command identifiers remain in English. Original Steam articles are quoted in their source language.

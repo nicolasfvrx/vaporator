@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a Discord bot in Rust for one community, configurable through administrator slash commands. Announce new Steam builds and official developer posts. Run the bot on Linux with Docker and persist state in SQLite on a mounted volume.
+Build a Discord bot in Rust for multiple Discord servers, configurable through administrator slash commands in each server. Announce new Steam builds and official developer posts. Run one bot process on Linux with Docker and persist state in SQLite on a mounted volume.
 
 Use English for repository content, documentation, code comments, commit messages, and bot commands and messages. Steam articles retain their original language.
 
@@ -33,7 +33,7 @@ Use English for repository content, documentation, code comments, commit message
 
 ## Discord commands
 
-Restrict commands to administrators of the configured Discord server:
+Register commands globally and restrict their use to server administrators. Manage subscriptions within the server where the command is invoked:
 
 | Command | Purpose |
 | --- | --- |
@@ -43,8 +43,8 @@ Restrict commands to administrators of the configured Discord server:
 | `/steam list` | List subscriptions and their identifiers |
 | `/steam branches` | List an application's accessible branches |
 | `/steam dayz` | Install the DayZ preset |
-| `/steam status` | Show connections, latest checks, and errors |
-| `/steam test` | Send a sample without mentions to the selected channel |
+| `/steam status` | Show shared connections, latest checks, pending deliveries, and errors across all servers |
+| `/steam test` | Send a sample without mentions; optionally select an application and builds/news/both |
 
 The DayZ preset tracks the `public` branch of these four applications:
 
@@ -61,7 +61,7 @@ A build announcement uses an embed with the application name, a right-hand Steam
 
 - Query `https://store.steampowered.com/events/ajaxgetpartnereventspageable/` every 5 minutes and filter for official Steam Community posts (`event_type` 28, 12, 13, 14, 34).
 - Extract the cover image from the event's `jsondata` and prepend it to the message.
-- Publish a normal Discord message with the title, formatted article preview, publication timestamp, and original link. Preserve headings, paragraphs, emphasis, and lists within the 2,000-character limit.
+- Publish a heading message with the title, publication timestamp, and first image. When article text is available, send a second message with the formatted preview, original link, and remaining images. Preserve headings, paragraphs, emphasis, and lists within the 2,000-character limit per message.
 - Attach up to four Steam-hosted images (including the cover image) (JPEG, PNG, GIF, or WebP; at most 2 MiB each). Skip unavailable or unsupported images without blocking text delivery.
 - Allow a separate source application for a dedicated server's news.
 - The DayZ preset uses the main DayZ news feed (`221100`) for both client subscriptions, deduplicated per channel. Live validation found the Experimental news endpoint (`1024020`) returns HTTP 403. Administrators can override the source with `/steam edit`.
@@ -74,7 +74,7 @@ A build announcement uses an embed with the application name, a right-hand Steam
 - Record detected changes and pending notifications in the same SQLite transaction.
 - Retry failed deliveries, respect Discord rate limits, and reconnect to Steam with progressive backoff.
 - Report permission issues and expired Steam sessions in logs and `/steam status`.
-- A duplicate remains possible if Discord accepts a message just before an interruption prevents recording success. Do not promise exactly-once delivery.
+- A duplicate remains possible if Discord accepts a message just before an interruption prevents recording success, including between the two messages of an article. Do not promise exactly-once delivery.
 
 ## Delivery and validation
 
@@ -87,7 +87,7 @@ A build announcement uses an embed with the application name, a right-hand Steam
 
 ## V1 limits
 
-One Discord server, configurable applications beyond DayZ, and branches accessible without a password. Workshop monitoring and game server installation or restarts are out of scope.
+Multiple Discord servers share one process, database, Steam session, and monitoring service. Subscription management is scoped to each server; status diagnostics remain global. Applications beyond DayZ are configurable, with branches accessible without a password. Workshop monitoring and game server installation or restarts are out of scope.
 
 ## References
 
