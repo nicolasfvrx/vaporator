@@ -625,8 +625,7 @@ async fn test(
             });
         }
         if matches!(m, Mode::News | Mode::Both) {
-            let articles = ctx.data().news.articles(id as u32, 0).await?;
-            if let Some(article) = articles.into_iter().last() {
+            if let Some(article) = ctx.data().news.latest_article(id as u32).await? {
                 let url = article.safe_url();
                 let mut images = crate::presentation::article(&article.contents).images;
                 if let Some(cover) = article.cover_image

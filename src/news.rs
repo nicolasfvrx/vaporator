@@ -142,6 +142,55 @@ impl News {
         result.sort_by_key(|a| a.date);
         Ok(result)
     }
+
+    pub async fn latest_article(&self, app_id: u32) -> Result<Option<Article>> {
+        let response: Response = self
+            .client
+            .get(&self.endpoint)
+            .query(&[
+                ("appid", app_id.to_string()),
+                ("count", "10".to_owned()),
+                ("offset", "0".to_owned()),
+            ])
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        for event in response.events {
+            if matches!(event.event_type, 12 | 13 | 14 | 28 | 34) {
+                let mut cover_image = None;
+                if let Ok(data) = serde_json::from_str::<JsonData>(&event.jsondata) {
+                    let hash = data
+                        .localized_title_image
+                        .and_then(|v| v.into_iter().next().flatten())
+                        .or_else(|| {
+                            data.localized_capsule_image
+                                .and_then(|v| v.into_iter().next().flatten())
+                        });
+                    if let (Some(hash), Ok(clan_id)) = (hash, event.clan_steamid.parse::<u64>()) {
+                        let clan_account_id = clan_id & 0xFFFFFFFF;
+                        cover_image = Some(format!(
+                            "https://clan.akamai.steamstatic.com/images/{clan_account_id}/{hash}"
+                        ));
+                    }
+                }
+                return Ok(Some(Article {
+                    url: format!(
+                        "https://store.steampowered.com/news/app/{app_id}/view/{}",
+                        event.gid
+                    ),
+                    gid: event.gid,
+                    title: event.event_name,
+                    contents: event.announcement_body.body,
+                    date: event.rtime32_start_time,
+                    cover_image,
+                }));
+            }
+        }
+        Ok(None)
+    }
 }
 
 pub fn excerpt(contents: &str) -> String {
