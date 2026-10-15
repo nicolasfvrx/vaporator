@@ -15,6 +15,7 @@ Copy `.env.example` to `.env` and replace the example credentials. The file is e
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `DISCORD_TOKEN` | Required | Discord bot token |
+| `STEAM_WEB_API_KEY` | Unset | Optional Steam Web API user key for the full Steam Store name catalog |
 | `DATA_DIR` | `data` locally; `/data` in Docker | SQLite and Steam session directory |
 | `BUILD_INTERVAL_SECONDS` | `60` | PICS polling interval; minimum 30 |
 | `NEWS_INTERVAL_SECONDS` | `300` | Official news polling interval; minimum 60 |
@@ -28,14 +29,28 @@ All replies to configuration commands are private to the administrator. Notifica
 
 | Command | Options and behavior |
 | --- | --- |
-| `/steam follow` | Required `app_id`, `channel`; optional `mode` (`builds`, `news`, `both`), `branch` (`public`), `role`, `news_app_id` (tracked AppID) |
+| `/steam follow` | Required `game` (name, AppID, or Steam application link); optional `channel` (current channel), `mode` (`builds`, `news`, `both`), `branch` (`public`), `role`, `news_app_id` (same input formats; defaults to tracked game) |
 | `/steam edit` | Required subscription `id`; optional `channel`, `mode`, `branch`, `role`, `clear_role`, `news_app_id` |
 | `/steam remove` | Required `id`; deletes the subscription and cancels its pending deliveries |
 | `/steam list` | Lists subscription IDs and routing |
-| `/steam branches` | Required `app_id`; lists accessible branches and builds |
-| `/steam dayz` | Required `channel`, optional `role`; adds missing DayZ subscriptions without changing existing ones |
+| `/steam branches` | Required `game` (name, AppID, or Steam application link); lists accessible branches and builds |
+| `/steam dayz` | Optional `channel` (current channel) and `role`; adds missing DayZ subscriptions without changing existing ones |
 | `/steam status` | Shows shared Steam connection, latest checks, queued deliveries, and monitoring errors across all servers |
-| `/steam test` | Required `channel`; optional `mode` (`builds`, `news`, `both`) and `app_id`, supplied together, to preview sample builds and/or the latest article; sends without role mentions |
+| `/steam test` | Optional `channel` (current channel); supply both `mode` (`builds`, `news`, `both`) and `game` to preview an application, or omit both for a generic test; sends without role mentions |
+
+These command options describe the development branch. Published V1 binaries use `app_id` and require an explicit destination channel. Updating the bot re-registers the new options globally; allow Discord to propagate the changes. Existing subscriptions and their baselines remain valid.
+
+### Game catalog and autocomplete
+
+`game` and `news_app_id` accept positive 32-bit AppIDs and `https://store.steampowered.com/app/<id>/` or `https://steamcommunity.com/app/<id>` links. Name autocomplete ignores case and accents and tolerates small spelling differences. The selected value is always the numeric AppID. A name entered without selecting a suggestion resolves only when it matches one unique normalized catalog name exactly; partial, misspelled, or ambiguous names must be selected from suggestions.
+
+The bot loads its catalog from SQLite at startup, initially seeding names from existing subscriptions. Successful Steam metadata reads enrich the catalog with verified names, icons, and branches. Branch suggestions exclude password-protected branches and use metadata cached for up to one hour. Commands that create or edit subscriptions still read current Steam data to establish their baseline.
+
+Set `STEAM_WEB_API_KEY` to a standard [Steam Web API user key](https://steamcommunity.com/dev/apikey) for a complete Steam Store game/software catalog. The key belongs to the operator, is separate from Steam login, and must never be entered in Discord. It is sent in a sensitive HTTP header, kept out of request URLs, and never persisted in SQLite. No key is required to search previously learned applications or submit an AppID/link directly. The Store catalog does not cover every dedicated server or tool; use its AppID to discover an accessible application through Steam.
+
+Synchronization uses Valve's `IStoreService/GetAppList` API at startup and every six hours, with pagination and incremental updates. If a page fails, the bot preserves the previous catalog and checkpoint, reports the issue in `/steam status`, and retries after five minutes. Cached name search works while Steam or the catalog API is unavailable. AppID suggestions without a cached name attempt a bounded Steam lookup; if it cannot finish in time, the suggestion explicitly says verification will occur when submitted.
+
+`/steam edit` and `/steam remove` suggest subscriptions from the current server only, labeled with the application, branch, and destination. Branch autocomplete also works when editing a selected subscription. When adding subscriptions, installing the preset, or testing, omitting `channel` uses the current channel and applies the same permission and channel-type checks as an explicit destination. Editing without a channel preserves the existing destination.
 
 Adding a subscription establishes a silent baseline. Editing deliberately resets that baseline, cancels pending notifications for that subscription, and suppresses historical news. An in-flight send may complete before an edit or removal acquires the delivery lock.
 

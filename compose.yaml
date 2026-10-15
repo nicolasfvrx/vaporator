@@ -6,6 +6,7 @@ services:
     init: true
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN:?Set DISCORD_TOKEN in .env}
+      STEAM_WEB_API_KEY: ${STEAM_WEB_API_KEY:-}
       DATA_DIR: /data
       BUILD_INTERVAL_SECONDS: ${BUILD_INTERVAL_SECONDS:-60}
       NEWS_INTERVAL_SECONDS: ${NEWS_INTERVAL_SECONDS:-300}

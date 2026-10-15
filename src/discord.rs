@@ -193,6 +193,226 @@ fn app_id(value: i64) -> Result<u32> {
         .ok_or_else(|| user_error("error.id"))
 }
 
+fn game_id(ctx: Context<'_>, value: &str) -> Result<u32> {
+    match crate::catalog::parse_game(value) {
+        Ok(Some(id)) => Ok(id),
+        Ok(None) => ctx
+            .data()
+            .catalog
+            .exact_name(value)
+            .ok_or_else(|| user_error("error.game_selection")),
+        Err(_) => Err(user_error("error.game_input")),
+    }
+}
+
+fn game_choices(games: Vec<crate::catalog::Game>) -> serenity::CreateAutocompleteResponse {
+    let choices = games
+        .into_iter()
+        .map(|game| {
+            serenity::AutocompleteChoice::new(
+                tr(
+                    "choice.game",
+                    &[
+                        ("name", &truncate(&game.name.replace(['\n', '\r'], " "), 75)),
+                        ("app_id", &game.appid.to_string()),
+                    ],
+                ),
+                game.appid.to_string(),
+            )
+        })
+        .collect();
+    serenity::CreateAutocompleteResponse::new().set_choices(choices)
+}
+
+async fn autocomplete_game(
+    ctx: Context<'_>,
+    partial: &str,
+) -> serenity::CreateAutocompleteResponse {
+    if !can_autocomplete(ctx) {
+        return serenity::CreateAutocompleteResponse::new();
+    }
+    match crate::catalog::parse_game(partial) {
+        Ok(Some(id)) => {
+            let mut game = ctx.data().catalog.get(id);
+            if game.is_none()
+                && let Some(app) = autocomplete_app(ctx, id).await
+            {
+                game = Some(crate::catalog::Game {
+                    appid: app.id,
+                    name: app.name,
+                });
+            }
+            match game {
+                Some(game) => game_choices(vec![game]),
+                None => serenity::CreateAutocompleteResponse::new().add_string_choice(
+                    tr("choice.app_id", &[("app_id", &id.to_string())]),
+                    id.to_string(),
+                ),
+            }
+        }
+        Ok(None) => {
+            let catalog = ctx.data().catalog.clone();
+            let query = partial.to_owned();
+            let games = tokio::task::spawn_blocking(move || catalog.search(&query))
+                .await
+                .unwrap_or_default();
+            game_choices(games)
+        }
+        Err(_) => serenity::CreateAutocompleteResponse::new(),
+    }
+}
+
+async fn autocomplete_branch(
+    ctx: Context<'_>,
+    partial: &str,
+) -> serenity::CreateAutocompleteResponse {
+    if !can_autocomplete(ctx) {
+        return serenity::CreateAutocompleteResponse::new();
+    }
+    let poise::Context::Application(context) = ctx else {
+        return serenity::CreateAutocompleteResponse::new();
+    };
+    let mut sub_game = None;
+    for arg in context.args {
+        if let ("game", serenity::ResolvedValue::String(value)) = (arg.name, &arg.value) {
+            sub_game = game_id(ctx, value).ok();
+        }
+        if let ("id", serenity::ResolvedValue::Integer(id)) = (arg.name, &arg.value)
+            && let Some(guild) = ctx.guild_id()
+            && let Ok(Some(sub)) = ctx.data().db.get(*id, &guild.get().to_string()).await
+        {
+            sub_game = u32::try_from(sub.app_id).ok();
+        }
+    }
+    let Some(id) = sub_game else {
+        return serenity::CreateAutocompleteResponse::new();
+    };
+    let app = match ctx.data().catalog.cached_app(id) {
+        Some(app) => Some(app),
+        None => autocomplete_app(ctx, id).await,
+    };
+    let choices = app
+        .into_iter()
+        .flat_map(|app| app.branches)
+        .filter(|(name, branch)| {
+            !branch.password_required
+                && name.encode_utf16().count() <= 100
+                && name.to_lowercase().contains(&partial.to_lowercase())
+        })
+        .take(25)
+        .map(|(name, _)| serenity::AutocompleteChoice::new(name.clone(), name))
+        .collect();
+    serenity::CreateAutocompleteResponse::new().set_choices(choices)
+}
+
+async fn autocomplete_subscription(
+    ctx: Context<'_>,
+    partial: &str,
+) -> serenity::CreateAutocompleteResponse {
+    if !can_autocomplete(ctx) {
+        return serenity::CreateAutocompleteResponse::new();
+    }
+    let Some(guild) = ctx.guild_id() else {
+        return serenity::CreateAutocompleteResponse::new();
+    };
+    let subs = ctx
+        .data()
+        .db
+        .list(&guild.get().to_string())
+        .await
+        .unwrap_or_default();
+    let query = crate::catalog::normalize(partial);
+    let choices = subs
+        .into_iter()
+        .filter(|sub| {
+            query.is_empty()
+                || crate::catalog::normalize(&sub.name).contains(&query)
+                || sub.id.to_string().starts_with(partial)
+                || sub.app_id.to_string().starts_with(partial)
+        })
+        .take(25)
+        .map(|sub| {
+            let channel = ctx
+                .serenity_context()
+                .cache
+                .guild(guild)
+                .and_then(|guild| {
+                    guild
+                        .channels
+                        .get(&serenity::ChannelId::new(sub.channel_id.parse().ok()?))
+                        .map(|channel| channel.name.clone())
+                })
+                .unwrap_or_else(|| sub.channel_id.clone());
+            serenity::AutocompleteChoice::new(
+                truncate(
+                    &tr(
+                        "choice.subscription",
+                        &[
+                            ("id", &sub.id.to_string()),
+                            ("name", &truncate(&sub.name, 45)),
+                            ("branch", &truncate(&sub.branch, 15)),
+                            ("channel", &channel),
+                        ],
+                    ),
+                    100,
+                ),
+                sub.id,
+            )
+        })
+        .collect();
+    serenity::CreateAutocompleteResponse::new().set_choices(choices)
+}
+
+fn can_autocomplete(ctx: Context<'_>) -> bool {
+    let poise::Context::Application(context) = ctx else {
+        return false;
+    };
+    context.interaction.guild_id.is_some()
+        && context
+            .interaction
+            .member
+            .as_ref()
+            .and_then(|member| member.permissions)
+            .is_some_and(|permissions| permissions.administrator())
+}
+
+async fn autocomplete_app(ctx: Context<'_>, id: u32) -> Option<crate::steam::App> {
+    let slot = ctx
+        .data()
+        .catalog
+        .lookup_slots
+        .clone()
+        .try_acquire_owned()
+        .ok()?;
+    let service = ctx.data().clone();
+    // A slow lookup may finish populating the cache after the autocomplete deadline.
+    // The owned permit bounds both foreground and unfinished background lookups.
+    let lookup = tokio::spawn(async move {
+        let _slot = slot;
+        service.app(id).await
+    });
+    tokio::time::timeout(Duration::from_millis(1200), lookup)
+        .await
+        .ok()?
+        .ok()?
+        .ok()
+}
+
+async fn destination(
+    ctx: Context<'_>,
+    channel: Option<serenity::GuildChannel>,
+) -> Result<serenity::GuildChannel> {
+    match channel {
+        Some(channel) => Ok(channel),
+        None => ctx
+            .channel_id()
+            .to_channel(ctx.http())
+            .await?
+            .guild()
+            .ok_or_else(|| user_error("error.channel")),
+    }
+}
+
 async fn validate_destination(
     ctx: Context<'_>,
     channel: &serenity::GuildChannel,
@@ -233,8 +453,9 @@ async fn validate_destination(
 
 async fn prepare(ctx: Context<'_>, sub: &mut Subscription) -> Result<Vec<crate::news::Article>> {
     app_id(sub.news_app_id)?;
-    let steam = client(ctx).await?;
-    let app = steam
+    client(ctx).await?;
+    let app = ctx
+        .data()
         .app(app_id(sub.app_id)?)
         .await
         .map_err(|_| user_error("error.app"))?;
@@ -255,7 +476,7 @@ async fn prepare(ctx: Context<'_>, sub: &mut Subscription) -> Result<Vec<crate::
     if sub.news() {
         let source = app_id(sub.news_app_id)?;
         if source != app.id {
-            steam
+            ctx.data()
                 .app(source)
                 .await
                 .map_err(|_| user_error("error.app"))?;
@@ -306,14 +527,21 @@ async fn steam(_ctx: Context<'_>) -> Result<()> {
 #[poise::command(slash_command)]
 async fn follow(
     ctx: Context<'_>,
-    app_id: i64,
-    channel: serenity::GuildChannel,
+    #[autocomplete = "autocomplete_game"] game: String,
+    channel: Option<serenity::GuildChannel>,
     mode: Option<Mode>,
-    branch: Option<String>,
+    #[autocomplete = "autocomplete_branch"] branch: Option<String>,
     role: Option<serenity::Role>,
-    news_app_id: Option<i64>,
+    #[autocomplete = "autocomplete_game"] news_app_id: Option<String>,
 ) -> Result<()> {
     ctx.defer_ephemeral().await?;
+    let channel = destination(ctx, channel).await?;
+    let app_id = i64::from(game_id(ctx, &game)?);
+    let news_app_id = news_app_id
+        .as_deref()
+        .map(|value| game_id(ctx, value))
+        .transpose()?
+        .map(i64::from);
     validate_destination(ctx, &channel, role.as_ref().map(|r| r.id)).await?;
     let mut sub = Subscription {
         id: 0,
@@ -346,13 +574,13 @@ async fn follow(
 #[allow(clippy::too_many_arguments)]
 async fn edit(
     ctx: Context<'_>,
-    id: i64,
+    #[autocomplete = "autocomplete_subscription"] id: i64,
     channel: Option<serenity::GuildChannel>,
     mode: Option<Mode>,
-    branch: Option<String>,
+    #[autocomplete = "autocomplete_branch"] branch: Option<String>,
     role: Option<serenity::Role>,
     clear_role: Option<bool>,
-    news_app_id: Option<i64>,
+    #[autocomplete = "autocomplete_game"] news_app_id: Option<String>,
 ) -> Result<()> {
     ctx.defer_ephemeral().await?;
     let mut sub = ctx
@@ -371,7 +599,7 @@ async fn edit(
         sub.branch = branch;
     }
     if let Some(source) = news_app_id {
-        sub.news_app_id = source;
+        sub.news_app_id = i64::from(game_id(ctx, &source)?);
     }
     if clear_role == Some(true) {
         sub.role_id = None;
@@ -410,7 +638,10 @@ async fn edit(
 }
 
 #[poise::command(slash_command)]
-async fn remove(ctx: Context<'_>, id: i64) -> Result<()> {
+async fn remove(
+    ctx: Context<'_>,
+    #[autocomplete = "autocomplete_subscription"] id: i64,
+) -> Result<()> {
     ctx.defer_ephemeral().await?;
     let _lock = ctx.data().mutations.lock().await;
     if !ctx
@@ -462,11 +693,15 @@ async fn list(ctx: Context<'_>) -> Result<()> {
 }
 
 #[poise::command(slash_command)]
-async fn branches(ctx: Context<'_>, app_id: i64) -> Result<()> {
+async fn branches(
+    ctx: Context<'_>,
+    #[autocomplete = "autocomplete_game"] game: String,
+) -> Result<()> {
     ctx.defer_ephemeral().await?;
-    let app = client(ctx)
-        .await?
-        .app(crate::discord::app_id(app_id)?)
+    client(ctx).await?;
+    let app = ctx
+        .data()
+        .app(game_id(ctx, &game)?)
         .await
         .map_err(|_| user_error("error.app"))?;
     let lines: Vec<_> = app
@@ -490,12 +725,13 @@ async fn branches(ctx: Context<'_>, app_id: i64) -> Result<()> {
 #[poise::command(slash_command)]
 async fn dayz(
     ctx: Context<'_>,
-    channel: serenity::GuildChannel,
+    channel: Option<serenity::GuildChannel>,
     role: Option<serenity::Role>,
 ) -> Result<()> {
     ctx.defer_ephemeral().await?;
+    let channel = destination(ctx, channel).await?;
     validate_destination(ctx, &channel, role.as_ref().map(|r| r.id)).await?;
-    let steam = client(ctx).await?;
+    client(ctx).await?;
     let mut added = 0;
     let mut skipped = 0;
     for id in [221100, 1024020, 223350, 1042420] {
@@ -512,7 +748,8 @@ async fn dayz(
             skipped += 1;
             continue;
         }
-        let app = steam
+        let app = ctx
+            .data()
             .app(id as u32)
             .await
             .map_err(|_| user_error("error.app"))?;
@@ -623,23 +860,29 @@ async fn status(ctx: Context<'_>) -> Result<()> {
 #[poise::command(slash_command)]
 async fn test(
     ctx: Context<'_>,
-    channel: serenity::GuildChannel,
+    channel: Option<serenity::GuildChannel>,
     mode: Option<Mode>,
-    app_id: Option<i64>,
+    #[autocomplete = "autocomplete_game"] game: Option<String>,
 ) -> Result<()> {
     ctx.defer_ephemeral().await?;
+    let channel = destination(ctx, channel).await?;
     validate_destination(ctx, &channel, None).await?;
     let mut events = Vec::new();
-    if let (Some(m), Some(id)) = (mode, app_id) {
-        let steam = client(ctx).await?;
-        let app = steam
-            .app(crate::discord::app_id(id)?)
+    if mode.is_some() != game.is_some() {
+        return Err(user_error("error.test_options"));
+    }
+    if let (Some(m), Some(game)) = (mode, game) {
+        let id = game_id(ctx, &game)?;
+        client(ctx).await?;
+        let app = ctx
+            .data()
+            .app(id)
             .await
             .map_err(|_| user_error("error.app"))?;
         if matches!(m, Mode::Builds | Mode::Both) {
             events.push(Notification::Build {
                 name: app.name.clone(),
-                app_id: id as u32,
+                app_id: id,
                 branch: "public".into(),
                 old: "1234567".into(),
                 new: "1234568".into(),
@@ -648,7 +891,7 @@ async fn test(
             });
         }
         if matches!(m, Mode::News | Mode::Both)
-            && let Some(article) = ctx.data().news.latest_article(id as u32).await?
+            && let Some(article) = ctx.data().news.latest_article(id).await?
         {
             let url = article.safe_url();
             let formatted = crate::presentation::article(&article.contents);
@@ -893,6 +1136,48 @@ mod tests {
                 assert!(p.description.is_some());
             }
         }
+    }
+    #[test]
+    fn game_options_use_string_autocomplete_and_channels_are_optional() {
+        let root = commands().remove(0);
+        let json = serde_json::to_value(root.create_as_slash_command().unwrap()).unwrap();
+        for name in ["follow", "branches", "test"] {
+            let command = json["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|option| option["name"] == name)
+                .unwrap();
+            let parameters = command["options"].as_array().unwrap();
+            assert!(!parameters.iter().any(|option| option["name"] == "app_id"));
+            let game = parameters
+                .iter()
+                .find(|option| option["name"] == "game")
+                .unwrap();
+            assert_eq!(game["type"], 3);
+            assert_eq!(game["autocomplete"], true);
+            if let Some(channel) = parameters.iter().find(|option| option["name"] == "channel") {
+                assert_eq!(channel["required"], false);
+            }
+        }
+        for command in json["options"].as_array().unwrap() {
+            for parameter in command["options"].as_array().unwrap_or(&Vec::new()) {
+                assert!(parameter["description"].as_str().unwrap().len() <= 100);
+            }
+        }
+    }
+
+    #[test]
+    fn autocomplete_labels_preserve_canonical_ids_and_discord_limits() {
+        let choices = game_choices(vec![crate::catalog::Game {
+            appid: u32::MAX,
+            name: "😀{app_id}\n".repeat(40),
+        }]);
+        let json = serde_json::to_value(choices).unwrap();
+        assert_eq!(json["choices"][0]["value"], u32::MAX.to_string());
+        let label = json["choices"][0]["name"].as_str().unwrap();
+        assert!(label.encode_utf16().count() <= 100);
+        assert!(!label.contains('\n'));
     }
     #[test]
     fn test_never_pings_and_timestamps_are_native() {

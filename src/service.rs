@@ -23,11 +23,13 @@ pub struct Service {
     pub steam: RwLock<Option<Steam>>,
     pub health: RwLock<Health>,
     pub mutations: Mutex<()>,
+    pub catalog: Arc<crate::catalog::Catalog>,
 }
 
 impl Service {
     pub async fn new(config: Config) -> Result<Arc<Self>> {
         let db = Db::open(&config.data_dir).await?;
+        let catalog = Arc::new(crate::catalog::Catalog::new(db.clone()).await?);
         Ok(Arc::new(Self {
             config,
             db,
@@ -36,6 +38,7 @@ impl Service {
             steam: RwLock::new(None),
             health: RwLock::new(Health::default()),
             mutations: Mutex::new(()),
+            catalog,
         }))
     }
 
@@ -48,6 +51,40 @@ impl Service {
     }
     pub async fn clear(&self, key: &str) {
         self.health.write().await.errors.remove(key);
+    }
+
+    pub async fn app(&self, id: u32) -> Result<crate::steam::App> {
+        let steam = self
+            .steam
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Steam is not connected"))?;
+        let app = steam.app(id).await?;
+        if let Err(error) = self.catalog.remember(&app).await {
+            tracing::warn!(%error, app_id = id, "Could not cache Steam application metadata");
+        }
+        Ok(app)
+    }
+}
+
+pub async fn catalog_worker(service: Arc<Service>) {
+    let Some(key) = service.config.steam_web_api_key.as_deref() else {
+        return;
+    };
+    loop {
+        let delay = match service.catalog.sync(key).await {
+            Ok(()) => {
+                service.clear("catalog").await;
+                6 * 3600
+            }
+            Err(error) => {
+                tracing::warn!(%error, "Steam application catalog refresh failed");
+                service.error("catalog", tr("health.catalog", &[])).await;
+                300
+            }
+        };
+        tokio::time::sleep(Duration::from_secs(delay)).await;
     }
 }
 
@@ -107,7 +144,12 @@ async fn monitor_builds(service: &Service, client: &Steam) -> Result<()> {
                 app
             } else {
                 match client.app(sub.app_id as u32).await {
-                    Ok(app) => apps.entry(sub.app_id).or_insert(app),
+                    Ok(app) => {
+                        if let Err(error) = service.catalog.remember(&app).await {
+                            tracing::warn!(%error, "Could not cache monitored application");
+                        }
+                        apps.entry(sub.app_id).or_insert(app)
+                    }
                     Err(error) => {
                         tracing::warn!(app_id=sub.app_id, %error, "Cannot retrieve Steam application");
                         service

@@ -89,6 +89,15 @@ A build announcement uses an embed with the application name, a right-hand Steam
 
 Multiple Discord servers share one process, database, Steam session, and monitoring service. Subscription management is scoped to each server; status diagnostics remain global. Applications beyond DayZ are configurable, with branches accessible without a password. Workshop monitoring and game server installation or restarts are out of scope.
 
+## Standalone development after V1
+
+- Keep one process and SQLite. RabbitMQ, PostgreSQL, and distributed sharding are deferred.
+- Add a persistent Steam application catalog and autocomplete for game names, AppIDs, and Steam application links. Use a configured Steam Web API user key for the full Store catalog and enrich it through successful PICS reads.
+- Replace `app_id` with a string `game` option on follow, branches, and test. Keep stored AppIDs numeric. Only explicit ID selection or a unique exact name can choose a game; fuzzy matches are suggestions.
+- Add branch autocomplete, server-scoped subscription suggestions, and the current destination channel as the default for creation and testing.
+- Preserve existing subscriptions, notification state, and silent baseline behavior. Keep all new user-facing text in the English catalog.
+- Workshop item/collection monitoring and an interactive management panel are subsequent work; the V1 release remains unchanged.
+
 ## References
 
 - [steam-vent](https://docs.rs/steam-vent/latest/steam_vent/)

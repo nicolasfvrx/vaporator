@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::path::PathBuf;
 
+mod catalog;
 mod config;
 mod db;
 mod discord;
@@ -68,6 +69,13 @@ async fn main() -> Result<()> {
             let mut workers = tokio::task::JoinSet::new();
             workers.spawn(service::steam_worker(service.clone()));
             workers.spawn(service::news_worker(service.clone()));
+            if service.config.steam_web_api_key.is_some() {
+                workers.spawn(service::catalog_worker(service.clone()));
+            } else {
+                tracing::info!(
+                    "STEAM_WEB_API_KEY is unset; name search uses learned applications only"
+                );
+            }
             workers.spawn(discord::delivery_worker(service.clone()));
             let result = tokio::select! {
                 result = discord::run(service.clone()) => result,

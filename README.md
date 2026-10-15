@@ -7,6 +7,7 @@ A Discord bot written in Rust to track Steam application builds and official new
 - Track Steam build changes through a persistent PICS connection, including rollbacks.
 - Follow official Steam Community announcements, independently of build notifications.
 - Configure applications, branches, destination channels, and optional role mentions through administrator slash commands.
+- Find games by name, AppID, or Steam link, with autocomplete backed by a persistent local catalog.
 - Use one bot across multiple Discord servers, with subscriptions managed separately in each server.
 - Install a DayZ preset covering the stable and experimental clients and servers.
 - Persist subscriptions, baselines, and pending deliveries in SQLite. Retry failures after restarts.
@@ -24,10 +25,16 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-5. As a server administrator, run `/steam status`, then `/steam dayz channel:#steam-updates` or `/steam follow app_id:221100 channel:#steam-updates`.
+5. As a server administrator, run `/steam status`, then `/steam dayz channel:#steam-updates` or `/steam follow game:221100 channel:#steam-updates`. Omit `channel` to use the current text or announcement channel.
 6. Run `/steam test channel:#steam-updates` to verify delivery without mentioning anyone.
 
 See the [operations guide](docs/OPERATIONS.md) for Steam login, command options, backups, and troubleshooting. The [V1 plan](docs/PLAN.md) records the intended behavior.
+
+### Game search
+
+The development branch replaces the `app_id` option with `game` on `/steam follow`, `/steam branches`, and `/steam test`. Type a name and select a suggestion, enter an AppID, or paste a Steam application link. The optional `news_app_id` also accepts these inputs. Ambiguous names require selecting an AppID; fuzzy matches are suggestions only.
+
+Set the optional `STEAM_WEB_API_KEY` in `.env` to enable the full Steam Store name catalog. A standard [Steam Web API user key](https://steamcommunity.com/dev/apikey) is sufficient and is separate from the saved Steam login session. The catalog refreshes in the background every six hours and is stored in SQLite. Without a key, the bot searches applications already learned from Steam or existing subscriptions; unknown AppIDs and Steam links can still be entered directly. This remains a standalone process with SQLite.
 
 ### Download a compiled release
 

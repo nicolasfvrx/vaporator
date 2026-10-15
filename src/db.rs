@@ -469,7 +469,11 @@ mod tests {
         sqlx::query("INSERT INTO subscriptions(app_id,name,branch,mode,news_app_id,channel_id,build_id) VALUES (42,'Existing game','public','builds',42,'123','1')").execute(&pool).await.unwrap();
         pool.close().await;
         let db = Db::open(dir.path()).await.unwrap();
+        let catalog = crate::catalog::Catalog::new(db.clone()).await.unwrap();
+        assert_eq!(catalog.get(42).unwrap().name, "Existing game");
         let mut sub = db.list("").await.unwrap().remove(0);
+        assert_eq!(sub.build_id.as_deref(), Some("1"));
+        assert_eq!(db.pending_count().await.unwrap(), 0);
         assert!(sub.icon_url.is_none());
         sub.icon_url = Some("https://cdn.akamai.steamstatic.com/icon.jpg".into());
         db.record_build(&sub, "2").await.unwrap();
@@ -486,5 +490,37 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn subscription_selection_and_mutations_are_scoped_to_the_current_guild() {
+        let (_dir, db) = database().await;
+        let first = subscription(&db, "123").await;
+        let mut other = first.clone();
+        other.id = 0;
+        other.guild_id = "999".into();
+        other.channel_id = "456".into();
+        other.id = db.save(&other, Some(&[])).await.unwrap();
+        assert_eq!(
+            db.list("0")
+                .await
+                .unwrap()
+                .iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>(),
+            [first.id]
+        );
+        assert_eq!(
+            db.list("999")
+                .await
+                .unwrap()
+                .iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>(),
+            [other.id]
+        );
+        assert!(db.get(other.id, "0").await.unwrap().is_none());
+        assert!(!db.remove(other.id, "0").await.unwrap());
+        assert!(db.get(other.id, "999").await.unwrap().is_some());
     }
 }

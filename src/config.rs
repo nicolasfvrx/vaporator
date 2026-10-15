@@ -7,6 +7,7 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub build_interval: Duration,
     pub news_interval: Duration,
+    pub steam_web_api_key: Option<String>,
 }
 
 impl Config {
@@ -19,6 +20,10 @@ impl Config {
             data_dir,
             build_interval: interval("BUILD_INTERVAL_SECONDS", 60, 30)?,
             news_interval: interval("NEWS_INTERVAL_SECONDS", 300, 60)?,
+            steam_web_api_key: std::env::var("STEAM_WEB_API_KEY")
+                .ok()
+                .map(|key| key.trim().to_owned())
+                .filter(|key| !key.is_empty()),
         })
     }
 }

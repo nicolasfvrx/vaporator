@@ -3759,10 +3759,12 @@ dependencies = [
  "sqlx",
  "steam-vent",
  "steam-vent-proto-steam",
+ "strsim",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
  "vdf-reader",
 ]
 
