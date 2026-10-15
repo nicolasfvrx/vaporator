@@ -63,7 +63,7 @@ impl News {
         Ok(Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
-                .user_agent("vaporator/0.1")
+                .user_agent(concat!("vaporator/", env!("CARGO_PKG_VERSION")))
                 .build()?,
             endpoint: "https://store.steampowered.com/events/ajaxgetpartnereventspageable/"
                 .to_owned(),

@@ -29,6 +29,12 @@ docker compose logs -f
 
 See the [operations guide](docs/OPERATIONS.md) for Steam login, command options, backups, and troubleshooting. The [V1 plan](docs/PLAN.md) records the intended behavior.
 
+### Download a compiled release
+
+Download the Linux x86_64 (`.tar.gz`) or Windows x86_64 (`.zip`) archive from [GitHub Releases](https://github.com/nicolasfvrx/vaporator/releases/latest). Each archive contains the executable, `.env.example`, and documentation. Rust and Docker are not required to run these binaries. Linux binaries target Ubuntu 22.04 or newer compatible systems with glibc 2.35 or later.
+
+Extract the archive, copy `.env.example` to `.env`, and set `DISCORD_TOKEN`. From the extracted directory, run `./vaporator run` on Linux or `.\vaporator.exe run` in PowerShell. Configuration and data are read relative to the working directory. See [native installation](docs/OPERATIONS.md#native-installation) for verification and Steam login.
+
 ### DayZ access
 
 Live anonymous testing retrieved public builds for DayZ (`221100`), DayZ Server (`223350`), and DayZ Experimental Server (`1042420`). DayZ Experimental (`1024020`) returned no accessible branches. Use `steam-login` with a Steam account that has the necessary access, then verify with `probe`.
